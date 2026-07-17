@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inventory Generator</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Custom Stylesheet -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-logo">
+        <i class="fa-solid fa-boxes-stacked logo-icon"></i>
+        <div>
+          <h1 data-i18n="app_title">Generator Spisów</h1>
+          <p class="subtitle" data-i18n="app_subtitle">Generuj profesjonalne raporty DOCX, CSV i HTML w locie</p>
+        </div>
+      </div>
+      
+      <div class="header-controls">
+        <!-- i18n switcher -->
+        <div class="lang-selector">
+          <button id="lang-pl-btn" class="btn-lang active">PL</button>
+          <button id="lang-en-btn" class="btn-lang">EN</button>
+        </div>
+        
+        <!-- Theme Toggle -->
+        <button id="theme-toggle-btn" class="btn-theme" title="Toggle Light/Dark Theme">
+          <i class="fa-solid fa-moon moon-icon"></i>
+          <i class="fa-solid fa-sun sun-icon"></i>
+        </button>
+
+        <div class="api-status">
+          <span class="status-indicator online"></span>
+          <span class="status-text" data-i18n="status_connected">Połączono z serwerem</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="main-layout">
+      <!-- Left Sidebar: Controls & Inputs -->
+      <aside class="sidebar">
+        <!-- Add/Edit Product Panel -->
+        <div class="panel">
+          <div class="panel-header">
+            <h2>
+              <i class="fa-solid fa-circle-plus header-icon-blue"></i>
+              <span id="form-title" data-i18n="panel_add_title">Dodaj nowy produkt</span>
+            </h2>
+            <button id="cancel-edit-btn" class="btn btn-sm btn-icon-only hide" title="Cancel Edit">
+              <i class="fa-solid fa-times"></i>
+            </button>
+          </div>
+          <form id="product-form" class="panel-body">
+            <!-- Dynamic Fields will be rendered here by JS -->
+            <div id="dynamic-fields-container"></div>
+            
+            <button type="submit" class="btn btn-primary btn-block" id="submit-product-btn">
+              <i class="fa-solid fa-plus"></i> <span data-i18n="btn_add_product">Dodaj produkt</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- Export Actions Panel -->
+        <div class="panel">
+          <div class="panel-header">
+            <h2><i class="fa-solid fa-file-export header-icon-green"></i> <span data-i18n="panel_export_title">Eksportuj raport</span></h2>
+          </div>
+          <div class="panel-body export-actions">
+            <button id="export-docx-btn" class="btn btn-gradient btn-docx">
+              <i class="fa-solid fa-file-word"></i> Word (.docx)
+            </button>
+            <button id="export-csv-btn" class="btn btn-gradient btn-csv">
+              <i class="fa-solid fa-file-csv"></i> Excel (.csv)
+            </button>
+            <button id="export-html-btn" class="btn btn-gradient btn-html">
+              <i class="fa-solid fa-file-code"></i> Webpage (.html)
+            </button>
+          </div>
+        </div>
+
+        <!-- Project Backup Panel -->
+        <div class="panel">
+          <div class="panel-header">
+            <h2><i class="fa-solid fa-floppy-disk header-icon-blue"></i> <span data-i18n="btn_export_json">Kopia zapasowa</span></h2>
+          </div>
+          <div class="panel-body export-actions">
+            <button id="export-json-btn" class="btn btn-primary btn-block">
+              <i class="fa-solid fa-download"></i> <span data-i18n="btn_export_json">Zapisz projekt (JSON)</span>
+            </button>
+            <button id="import-json-trigger-btn" class="btn btn-secondary btn-block">
+              <i class="fa-solid fa-upload"></i> <span data-i18n="btn_import_json">Wgraj projekt (JSON)</span>
+            </button>
+            <input type="file" id="import-json-file" accept=".json" class="hide">
+            <hr class="panel-divider">
+            <button id="clear-all-btn" class="btn btn-danger btn-block">
+              <i class="fa-solid fa-trash-can"></i> <span data-i18n="btn_clear_all">Wyczyść wszystkie dane</span>
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Right Main Content: Table & Settings -->
+      <main class="content-area">
+        <!-- Settings / Attributes Panel (Toggleable) -->
+        <div class="panel collapsible collapsed" id="attributes-panel">
+          <div class="panel-header toggle-header" id="attributes-toggle">
+            <h2><i class="fa-solid fa-sliders header-icon-gray"></i> <span data-i18n="panel_settings_title">Ustawienia kolumn i atrybutów</span></h2>
+            <i class="fa-solid fa-chevron-down toggle-icon"></i>
+          </div>
+          <div class="panel-body collapsible-content">
+            <!-- Current Attributes List -->
+            <div class="attributes-manager">
+              <div class="attributes-table-wrapper">
+                <table class="settings-table">
+                  <thead>
+                    <tr>
+                      <th data-i18n="col_name">Nazwa kolumny</th>
+                      <th data-i18n="col_type">Typ</th>
+                      <th data-i18n="col_empty">Puste dozwolone</th>
+                      <th data-i18n="col_width">Szerokość</th>
+                      <th data-i18n="col_bold">Pogrubienie</th>
+                      <th data-i18n="col_action">Akcja</th>
+                    </tr>
+                  </thead>
+                  <tbody id="attributes-list-body">
+                    <!-- Loaded dynamically -->
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Add New Attribute Form -->
+              <div class="add-attribute-section">
+                <h3 data-i18n="add_column_section_title">Dodaj niestandardową kolumnę</h3>
+                <div class="attribute-form-grid">
+                  <div class="form-group">
+                    <label for="new-attr-name" data-i18n="col_name">Nazwa kolumny</label>
+                    <input type="text" id="new-attr-name" placeholder="np. Numer seryjny">
+                  </div>
+                  <div class="form-group">
+                    <label for="new-attr-type" data-i18n="col_type">Typ</label>
+                    <select id="new-attr-type">
+                      <option value="String">Text</option>
+                      <option value="Int">Integer</option>
+                      <option value="Double">Decimal</option>
+                      <option value="DateTime">Date & Time</option>
+                      <option value="Bool">Yes / No</option>
+                      <option value="Enum">Dropdown Selection</option>
+                    </select>
+                  </div>
+                  <div class="form-group" id="enum-values-group" style="display: none;">
+                    <label for="new-attr-enum">Enum Values (comma-separated)</label>
+                    <input type="text" id="new-attr-enum" placeholder="e.g. A, B, C">
+                  </div>
+                  <div class="form-group">
+                    <label for="new-attr-width" data-i18n="col_width">Szerokość</label>
+                    <input type="number" id="new-attr-width" value="800" min="200" max="4000">
+                  </div>
+                  <div class="form-group row-align-checkbox">
+                    <div class="checkbox-wrapper">
+                      <input type="checkbox" id="new-attr-empty" checked>
+                      <label for="new-attr-empty" data-i18n="field_label_empty">Puste dozwolone</label>
+                    </div>
+                    <div class="checkbox-wrapper">
+                      <input type="checkbox" id="new-attr-bold">
+                      <label for="new-attr-bold" data-i18n="field_label_bold">Pogrubienie</label>
+                    </div>
+                  </div>
+                  <div class="form-group action-align">
+                    <button type="button" id="add-attribute-btn" class="btn btn-secondary">
+                      <i class="fa-solid fa-plus-square"></i> <span data-i18n="btn_add_column">Dodaj kolumnę</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="attributes-actions">
+              <button id="save-attributes-btn" class="btn btn-success">
+                <i class="fa-solid fa-floppy-disk"></i> <span data-i18n="btn_save_settings">Zapisz ustawienia kolumn</span>
+              </button>
+              <button id="reset-attributes-btn" class="btn btn-outline">
+                <i class="fa-solid fa-rotate-left"></i> <span data-i18n="btn_reset_defaults">Przywróć domyślne</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Inventory List Panel -->
+        <div class="panel flex-grow">
+          <div class="panel-header">
+            <h2><i class="fa-solid fa-list-check header-icon-blue"></i> <span data-i18n="panel_records_title">Rekordy spisu</span></h2>
+            <div class="badge" id="product-count-badge">0 items</div>
+          </div>
+          <div class="panel-body table-container">
+            <!-- Table View -->
+            <div class="inventory-table-wrapper" id="inventory-table-container">
+              <table class="inventory-table" id="inventory-main-table">
+                <thead id="inventory-thead">
+                  <!-- Generated dynamically -->
+                </thead>
+                <tbody id="inventory-tbody">
+                  <!-- Generated dynamically -->
+                </tbody>
+              </table>
+              
+              <!-- Empty State -->
+              <div class="empty-state" id="empty-state">
+                <div class="empty-icon-wrapper">
+                  <i class="fa-solid fa-box-open"></i>
+                </div>
+                <h3 data-i18n="empty_state_title">Brak przedmiotów w spisie</h3>
+                <p data-i18n="empty_state_desc">Dodaj produkty za pomocą formularza po lewej stronie, aby rozpocząć.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Document Preview Modal -->
+  <div id="preview-modal" class="modal-backdrop hide">
+    <div class="modal">
+      <div class="modal-header">
+        <h2><i class="fa-solid fa-eye header-icon-green"></i> <span data-i18n="preview_title">Podgląd dokumentu</span></h2>
+        <button id="close-modal-btn" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="document-preview-container"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="modal-download-btn" class="btn btn-success">
+          <i class="fa-solid fa-download"></i> <span data-i18n="btn_download">Pobierz plik</span>
+        </button>
+        <button id="modal-close-btn" class="btn btn-outline">
+          <i class="fa-solid fa-arrow-left"></i> <span data-i18n="btn_back">Powrót</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Toast -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Custom Scripts -->
+  <script src="js/app.js"></script>
+</body>
+</html>
