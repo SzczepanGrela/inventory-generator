@@ -1,8 +1,10 @@
-// Application State
+// Application State - Local First
 let appState = {
   attributes: [],
   products: [],
+  nextProductId: 1,
   editingProductId: null,
+  editingAttributeIndex: null,
   currentLanguage: localStorage.getItem('inventory_lang') || 'pl',
   translations: {},
   currentTheme: localStorage.getItem('inventory_theme') || 'light',
@@ -75,17 +77,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   setTheme(appState.currentTheme);
   await loadLanguage(appState.currentLanguage);
   setupEventListeners();
-  await loadData();
+  await loadLocalData();
 });
 
 // Setup Event Listeners
 function setupEventListeners() {
-  // Collapsible settings panel toggle
   elements.attributesToggle.addEventListener('click', () => {
     elements.attributesPanel.classList.toggle('collapsed');
   });
 
-  // Dynamic Type Selection -> Show/Hide Enum Field
   elements.newAttrType.addEventListener('change', (e) => {
     if (e.target.value === 'Enum') {
       elements.newAttrEnumGroup.style.display = 'flex';
@@ -94,41 +94,75 @@ function setupEventListeners() {
     }
   });
 
-  // Add attribute locally
   elements.addAttributeBtn.addEventListener('click', addAttributeLocally);
 
-  // Reset and Save Attributes settings
-  elements.saveAttributesBtn.addEventListener('click', saveAttributesToServer);
+  elements.saveAttributesBtn.addEventListener('click', saveAttributesLocally);
   elements.resetAttributesBtn.addEventListener('click', resetAttributesToDefault);
 
-  // Form Submission
   elements.productForm.addEventListener('submit', handleFormSubmit);
   elements.cancelEditBtn.addEventListener('click', exitEditMode);
 
-  // Clear database data
   elements.clearAllBtn.addEventListener('click', clearAllProducts);
 
-  // Export buttons (Trigger Preview Modal)
   elements.exportDocxBtn.addEventListener('click', () => openPreviewModal('docx'));
   elements.exportCsvBtn.addEventListener('click', () => openPreviewModal('csv'));
   elements.exportHtmlBtn.addEventListener('click', () => openPreviewModal('html'));
 
-  // JSON backup actions
   elements.exportJsonBtn.addEventListener('click', exportProjectAsJson);
   elements.importJsonTriggerBtn.addEventListener('click', () => elements.importJsonFile.click());
   elements.importJsonFile.addEventListener('change', importProjectFromJson);
 
-  // Language selectors
   elements.langPlBtn.addEventListener('click', () => changeLanguage('pl'));
   elements.langEnBtn.addEventListener('click', () => changeLanguage('en'));
 
-  // Theme switch button
   elements.themeToggleBtn.addEventListener('click', toggleTheme);
 
-  // Modal actions
   elements.closeModalBtn.addEventListener('click', closePreviewModal);
   elements.modalCloseBtn.addEventListener('click', closePreviewModal);
   elements.modalDownloadBtn.addEventListener('click', executeDownload);
+}
+
+// ----------------------------------------------------
+// LOCAL-FIRST DATA STORAGE (localStorage)
+// ----------------------------------------------------
+async function loadLocalData() {
+  try {
+    const savedAttributes = localStorage.getItem('inventory_attributes');
+    if (savedAttributes) {
+      appState.attributes = JSON.parse(savedAttributes);
+    } else {
+      // Fetch default attributes template from server if localStorage is empty
+      const res = await fetch(`${appState.apiBase}/api/attributes/default`);
+      if (res.ok) {
+        appState.attributes = await res.json();
+        saveAttributesToLocalStorage();
+      }
+    }
+
+    const savedProducts = localStorage.getItem('inventory_products');
+    if (savedProducts) {
+      appState.products = JSON.parse(savedProducts);
+      // Calculate next ID
+      if (appState.products.length > 0) {
+        const maxId = Math.max(...appState.products.map(p => p.id || 0));
+        appState.nextProductId = maxId + 1;
+      }
+    } else {
+      appState.products = [];
+    }
+
+    renderUI();
+  } catch (error) {
+    console.error('Local data load error:', error);
+  }
+}
+
+function saveAttributesToLocalStorage() {
+  localStorage.setItem('inventory_attributes', JSON.stringify(appState.attributes));
+}
+
+function saveProductsToLocalStorage() {
+  localStorage.setItem('inventory_products', JSON.stringify(appState.products));
 }
 
 // ----------------------------------------------------
@@ -161,7 +195,6 @@ function translatePage() {
     }
   });
 
-  // Refresh dynamic parts
   if (appState.attributes.length > 0) {
     renderUI();
   }
@@ -186,7 +219,6 @@ function updateLangUI() {
   }
 }
 
-// Format the localized item count badge
 function getLocalizedProductBadge(count) {
   if (appState.currentLanguage === 'pl') {
     if (count === 1) return `1 ${getTranslation('items_badge_one')}`;
@@ -197,7 +229,6 @@ function getLocalizedProductBadge(count) {
     }
     return `${count} ${getTranslation('items_badge_many')}`;
   } else {
-    // English
     if (count === 1) return `1 item`;
     return `${count} items`;
   }
@@ -218,34 +249,14 @@ function setTheme(theme) {
 }
 
 // ----------------------------------------------------
-// DATA SERVICE & API LOGIC
+// UI RENDERING
 // ----------------------------------------------------
-async function loadData() {
-  try {
-    const attrResponse = await fetch(`${appState.apiBase}/api/attributes`);
-    if (attrResponse.ok) {
-      appState.attributes = await attrResponse.json();
-    }
-    
-    const prodResponse = await fetch(`${appState.apiBase}/api/products`);
-    if (prodResponse.ok) {
-      appState.products = await prodResponse.json();
-    }
-
-    renderUI();
-  } catch (error) {
-    showToast(getTranslation('toast_disconnected'), 'error');
-    console.error(error);
-  }
-}
-
 function renderUI() {
   renderDynamicForm();
   renderInventoryTable();
   renderAttributesSettings();
 }
 
-// Build form inputs based on settings columns
 function renderDynamicForm() {
   elements.dynamicFieldsContainer.innerHTML = '';
   
@@ -270,7 +281,7 @@ function renderDynamicForm() {
         emptyOption.innerText = getTranslation('opt_choose');
         input.appendChild(emptyOption);
       }
-      attr.enumValues.forEach(val => {
+      (attr.enumValues || []).forEach(val => {
         const option = document.createElement('option');
         option.value = val.trim();
         option.innerText = val.trim();
@@ -317,7 +328,6 @@ function renderDynamicForm() {
   });
 }
 
-// Render main records table
 function renderInventoryTable() {
   elements.inventoryThead.innerHTML = '';
   elements.inventoryTbody.innerHTML = '';
@@ -336,13 +346,11 @@ function renderInventoryTable() {
 
   const headerTr = document.createElement('tr');
   
-  // ID Header
   const idTh = document.createElement('th');
   idTh.innerText = 'ID';
   idTh.style.width = '60px';
   headerTr.appendChild(idTh);
 
-  // Dynamic headers
   appState.attributes.forEach(attr => {
     const th = document.createElement('th');
     th.innerText = attr.name;
@@ -352,14 +360,12 @@ function renderInventoryTable() {
     headerTr.appendChild(th);
   });
 
-  // Actions Header
   const actionsTh = document.createElement('th');
   actionsTh.innerText = getTranslation('col_action');
   actionsTh.style.width = '100px';
   headerTr.appendChild(actionsTh);
   elements.inventoryThead.appendChild(headerTr);
 
-  // Data Rows
   appState.products.forEach(prod => {
     const tr = document.createElement('tr');
     
@@ -369,7 +375,7 @@ function renderInventoryTable() {
 
     appState.attributes.forEach(attr => {
       const td = document.createElement('td');
-      const val = prod.attributes[attr.name];
+      const val = prod.attributes ? prod.attributes[attr.name] : null;
       
       if (attr.type === 'Bool') {
         td.innerText = val === true ? getTranslation('opt_yes') : getTranslation('opt_no');
@@ -410,12 +416,14 @@ function renderInventoryTable() {
   });
 }
 
-// Render configuration list
 function renderAttributesSettings() {
   elements.attributesListBody.innerHTML = '';
 
   appState.attributes.forEach((attr, idx) => {
     const tr = document.createElement('tr');
+    if (appState.editingAttributeIndex === idx) {
+      tr.style.background = 'rgba(var(--primary-rgb), 0.08)';
+    }
     
     const nameTd = document.createElement('td');
     nameTd.innerText = attr.name;
@@ -438,11 +446,19 @@ function renderAttributesSettings() {
     tr.appendChild(boldTd);
 
     const actionTd = document.createElement('td');
+    actionTd.className = 'row-actions';
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn-row-action btn-edit-row';
+    editBtn.innerHTML = '<i class="fa-solid fa-pencil"></i>';
+    editBtn.addEventListener('click', () => editAttributeLocally(idx));
+
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'btn-row-action btn-delete-row';
     deleteBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
     deleteBtn.addEventListener('click', () => removeAttributeLocally(idx));
     
+    actionTd.appendChild(editBtn);
     actionTd.appendChild(deleteBtn);
     tr.appendChild(actionTd);
 
@@ -472,21 +488,69 @@ function addAttributeLocally() {
     return;
   }
 
-  if (appState.attributes.some(a => a.name.toLowerCase() === name.toLowerCase())) {
-    showToast(getTranslation('toast_col_exists'), 'error');
-    return;
+  const newAttr = { name, type, canBeEmpty, enumValues, columnWidth: width, isBold };
+
+  if (appState.editingAttributeIndex !== null) {
+    // Edit mode: replace the attribute at the editing index
+    const dupIdx = appState.attributes.findIndex((a, i) => i !== appState.editingAttributeIndex && a.name.toLowerCase() === name.toLowerCase());
+    if (dupIdx !== -1) {
+      showToast(getTranslation('toast_col_exists'), 'error');
+      return;
+    }
+    appState.attributes[appState.editingAttributeIndex] = newAttr;
+    appState.editingAttributeIndex = null;
+    showToast(getTranslation('toast_col_updated'), 'success');
+  } else {
+    // Add mode: check for duplicates, then push
+    if (appState.attributes.some(a => a.name.toLowerCase() === name.toLowerCase())) {
+      showToast(getTranslation('toast_col_exists'), 'error');
+      return;
+    }
+    appState.attributes.push(newAttr);
+    showToast(getTranslation('toast_col_added'), 'info');
   }
 
-  appState.attributes.push({
-    name,
-    type,
-    canBeEmpty,
-    enumValues,
-    columnWidth: width,
-    isBold
-  });
+  clearAttributeForm();
+  saveAttributesToLocalStorage();
+  renderUI();
+}
 
-  // Clear inputs
+function editAttributeLocally(index) {
+  const attr = appState.attributes[index];
+  if (!attr) return;
+
+  appState.editingAttributeIndex = index;
+
+  elements.newAttrName.value = attr.name;
+  elements.newAttrType.value = attr.type;
+  elements.newAttrEmpty.checked = attr.canBeEmpty;
+  elements.newAttrBold.checked = attr.isBold;
+  elements.newAttrWidth.value = attr.columnWidth;
+
+  if (attr.type === 'Enum') {
+    elements.newAttrEnumGroup.style.display = 'flex';
+    elements.newAttrEnum.value = (attr.enumValues || []).join(', ');
+  } else {
+    elements.newAttrEnumGroup.style.display = 'none';
+    elements.newAttrEnum.value = '';
+  }
+
+  // Update button text to indicate edit mode
+  elements.addAttributeBtn.innerHTML = `<i class="fa-solid fa-check"></i> ${getTranslation('btn_save_changes')}`;
+
+  // Expand the settings panel if collapsed
+  elements.attributesPanel.classList.remove('collapsed');
+
+  renderAttributesSettings();
+}
+
+function cancelAttributeEdit() {
+  appState.editingAttributeIndex = null;
+  clearAttributeForm();
+  renderAttributesSettings();
+}
+
+function clearAttributeForm() {
   elements.newAttrName.value = '';
   elements.newAttrEnum.value = '';
   elements.newAttrBold.checked = false;
@@ -494,45 +558,35 @@ function addAttributeLocally() {
   elements.newAttrWidth.value = '800';
   elements.newAttrEnumGroup.style.display = 'none';
   elements.newAttrType.value = 'String';
-
-  renderAttributesSettings();
-  showToast(getTranslation('toast_col_added'), 'info');
+  elements.addAttributeBtn.innerHTML = `<i class="fa-solid fa-plus-square"></i> ${getTranslation('btn_add_column')}`;
 }
 
 function removeAttributeLocally(index) {
   appState.attributes.splice(index, 1);
-  renderAttributesSettings();
+  saveAttributesToLocalStorage();
+  renderUI();
   showToast(getTranslation('toast_col_removed'), 'info');
 }
 
 async function resetAttributesToDefault() {
   if (confirm(getTranslation('confirm_reset_attr'))) {
-    await loadData();
-    showToast(getTranslation('toast_connected'), 'info');
+    const res = await fetch(`${appState.apiBase}/api/attributes/default`);
+    if (res.ok) {
+      appState.attributes = await res.json();
+      saveAttributesToLocalStorage();
+      renderUI();
+      showToast(getTranslation('toast_attr_saved'), 'info');
+    }
   }
 }
 
-async function saveAttributesToServer() {
-  try {
-    const response = await fetch(`${appState.apiBase}/api/attributes`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(appState.attributes)
-    });
-
-    if (!response.ok) throw new Error('API save error');
-    
-    appState.attributes = await response.json();
-    renderUI();
-    showToast(getTranslation('toast_attr_saved'), 'success');
-  } catch (error) {
-    showToast(`${getTranslation('toast_attr_error')}${error.message}`, 'error');
-  }
+function saveAttributesLocally() {
+  saveAttributesToLocalStorage();
+  renderUI();
+  showToast(getTranslation('toast_attr_saved'), 'success');
 }
 
-async function handleFormSubmit(e) {
+function handleFormSubmit(e) {
   e.preventDefault();
 
   const values = {};
@@ -563,38 +617,24 @@ async function handleFormSubmit(e) {
     values[attr.name] = val;
   }
 
-  try {
-    let response;
-    if (appState.editingProductId) {
-      response = await fetch(`${appState.apiBase}/api/products/${appState.editingProductId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(values)
-      });
-    } else {
-      response = await fetch(`${appState.apiBase}/api/products`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(values)
-      });
+  if (appState.editingProductId) {
+    const product = appState.products.find(p => p.id === appState.editingProductId);
+    if (product) {
+      product.attributes = values;
     }
-
-    if (!response.ok) throw new Error('API failed');
-
-    await reloadProducts();
-    exitEditMode();
-    showToast(appState.editingProductId ? getTranslation('toast_prod_updated') : getTranslation('toast_prod_added'), 'success');
-  } catch (error) {
-    showToast(`Error: ${error.message}`, 'error');
+    showToast(getTranslation('toast_prod_updated'), 'success');
+  } else {
+    const newProduct = {
+      id: appState.nextProductId++,
+      attributes: values
+    };
+    appState.products.push(newProduct);
+    showToast(getTranslation('toast_prod_added'), 'success');
   }
-}
 
-async function reloadProducts() {
-  const prodResponse = await fetch(`${appState.apiBase}/api/products`);
-  if (prodResponse.ok) {
-    appState.products = await prodResponse.json();
-    renderInventoryTable();
-  }
+  saveProductsToLocalStorage();
+  exitEditMode();
+  renderInventoryTable();
 }
 
 function enterEditMode(product) {
@@ -607,7 +647,7 @@ function enterEditMode(product) {
     const input = document.getElementById(`field-${attr.name}`);
     if (!input) return;
 
-    const val = product.attributes[attr.name];
+    const val = product.attributes ? product.attributes[attr.name] : null;
     if (attr.type === 'Bool') {
       input.checked = !!val;
     } else {
@@ -626,40 +666,27 @@ function exitEditMode() {
   elements.productForm.reset();
 }
 
-async function deleteProduct(id) {
+function deleteProduct(id) {
   if (!confirm(`${getTranslation('confirm_delete_prod')}${id}?`)) return;
 
-  try {
-    const response = await fetch(`${appState.apiBase}/api/products/${id}`, {
-      method: 'DELETE'
-    });
-    if (!response.ok) throw new Error('Delete API failed');
-    
-    showToast(`${getTranslation('toast_prod_deleted')}${id}`, 'info');
-    reloadProducts();
-  } catch (error) {
-    showToast(`Error: ${error.message}`, 'error');
-  }
+  appState.products = appState.products.filter(p => p.id !== id);
+  saveProductsToLocalStorage();
+  showToast(`${getTranslation('toast_prod_deleted')}${id}`, 'info');
+  renderInventoryTable();
 }
 
-async function clearAllProducts() {
+function clearAllProducts() {
   if (!confirm(getTranslation('confirm_clear_all'))) return;
 
-  try {
-    const response = await fetch(`${appState.apiBase}/api/products/clear`, {
-      method: 'POST'
-    });
-    if (!response.ok) throw new Error('Clear API failed');
-
-    showToast(getTranslation('toast_all_cleared'), 'info');
-    reloadProducts();
-  } catch (error) {
-    showToast(`Error: ${error.message}`, 'error');
-  }
+  appState.products = [];
+  appState.nextProductId = 1;
+  saveProductsToLocalStorage();
+  showToast(getTranslation('toast_all_cleared'), 'info');
+  renderInventoryTable();
 }
 
 // ----------------------------------------------------
-// DOCUMENT PREVIEW MODAL LOGIC
+// DOCUMENT PREVIEW & STATELESS EXPORT
 // ----------------------------------------------------
 function openPreviewModal(format) {
   if (appState.products.length === 0) {
@@ -686,12 +713,40 @@ function closePreviewModal() {
   appState.currentExportFormat = null;
 }
 
-function executeDownload() {
+async function executeDownload() {
   if (!appState.currentExportFormat) return;
-  const url = `${appState.apiBase}/api/export/${appState.currentExportFormat}`;
-  showToast(getTranslation('toast_export_start'), 'success');
-  window.open(url, '_blank');
-  closePreviewModal();
+
+  const format = appState.currentExportFormat;
+  showToast(getTranslation('toast_export_start'), 'info');
+
+  try {
+    const payload = {
+      attributes: appState.attributes,
+      products: appState.products
+    };
+
+    const response = await fetch(`${appState.apiBase}/api/export/${format}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) throw new Error('Export request failed');
+
+    const blob = await response.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `inventory_${new Date().toISOString().slice(0, 10)}.${format}`;
+    a.click();
+    
+    URL.revokeObjectURL(downloadUrl);
+    closePreviewModal();
+  } catch (error) {
+    showToast(`Export error: ${error.message}`, 'error');
+    console.error(error);
+  }
 }
 
 // 1. DOCX representation (A4 sheet layout)
@@ -730,7 +785,7 @@ function renderDocxPreview() {
     const tr = document.createElement('tr');
     appState.attributes.forEach(attr => {
       const td = document.createElement('td');
-      const val = prod.attributes[attr.name];
+      const val = prod.attributes ? prod.attributes[attr.name] : null;
       
       if (attr.type === 'Bool') {
         td.innerText = val === true ? getTranslation('opt_yes') : getTranslation('opt_no');
@@ -766,7 +821,7 @@ function renderCsvPreview() {
   
   appState.products.forEach(prod => {
     const row = appState.attributes.map(attr => {
-      let val = prod.attributes[attr.name];
+      let val = prod.attributes ? prod.attributes[attr.name] : null;
       let str = val !== null && val !== undefined ? val.toString() : '';
       if (str.includes(';') || str.includes('"') || str.includes('\n')) {
         str = `"${str.replace(/"/g, '""')}"`;
@@ -806,7 +861,7 @@ function renderHtmlPreview() {
     const tr = document.createElement('tr');
     appState.attributes.forEach(attr => {
       const td = document.createElement('td');
-      const val = prod.attributes[attr.name];
+      const val = prod.attributes ? prod.attributes[attr.name] : null;
       if (attr.type === 'Bool') {
         td.innerText = val === true ? getTranslation('opt_yes') : getTranslation('opt_no');
       } else {
@@ -829,7 +884,7 @@ function renderHtmlPreview() {
 }
 
 // ----------------------------------------------------
-// PROJECT JSON BACKUP (EXPORT / IMPORT)
+// PROJECT JSON BACKUP (LOCAL EXPORT / LOCAL IMPORT)
 // ----------------------------------------------------
 function exportProjectAsJson() {
   if (appState.attributes.length === 0) {
@@ -858,25 +913,25 @@ function importProjectFromJson(e) {
   if (!file) return;
 
   const reader = new FileReader();
-  reader.onload = async (event) => {
+  reader.onload = (event) => {
     try {
       const data = JSON.parse(event.target.result);
       if (!data.attributes || !data.products) {
         throw new Error('Invalid project structure');
       }
 
-      const response = await fetch(`${appState.apiBase}/api/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-
-      if (!response.ok) {
-        throw new Error('Server import failed');
-      }
-
       appState.attributes = data.attributes;
       appState.products = data.products;
+      if (appState.products.length > 0) {
+        const maxId = Math.max(...appState.products.map(p => p.id || 0));
+        appState.nextProductId = maxId + 1;
+      } else {
+        appState.nextProductId = 1;
+      }
+
+      saveAttributesToLocalStorage();
+      saveProductsToLocalStorage();
+      
       exitEditMode();
       renderUI();
       showToast(getTranslation('toast_import_success'), 'success');

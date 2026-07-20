@@ -39,6 +39,7 @@
   "toast_export_start": "Generating report, download starting...",
   "toast_col_added": "Added column locally. Save settings to apply.",
   "toast_col_removed": "Removed column locally. Save settings to apply.",
+  "toast_col_updated": "Column updated successfully!",
   "toast_col_exists": "A column with this name already exists!",
   "toast_col_req": "Column name is required!",
   "toast_col_enum_req": "Dropdown values are required for Enum columns!",

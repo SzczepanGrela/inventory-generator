@@ -39,6 +39,7 @@
   "toast_export_start": "Generowanie raportu...",
   "toast_col_added": "Dodano kolumnę lokalnie. Zapisz ustawienia, aby zatwierdzić.",
   "toast_col_removed": "Usunięto kolumnę lokalnie. Zapisz ustawienia, aby zatwierdzić.",
+  "toast_col_updated": "Zaktualizowano kolumnę pomyślnie!",
   "toast_col_exists": "Kolumna o tej nazwie już istnieje!",
   "toast_col_req": "Nazwa kolumny jest wymagana!",
   "toast_col_enum_req": "Wartości słownikowe są wymagane dla typu Enum!",
