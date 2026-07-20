@@ -9,6 +9,13 @@ using InventoryGenerator.Api.Generators;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Bind to PORT environment variable if provided by cloud host (Render, Fly.io, Railway, etc.)
+var port = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrEmpty(port))
+{
+    builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+}
+
 // Enable CORS
 builder.Services.AddCors(options =>
 {
