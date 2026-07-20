@@ -4,13 +4,17 @@ using System.Linq;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using InventoryGenerator.Api.Models;
 
 namespace InventoryGenerator.Api.Generators
 {
     public class DocxGenerator : IDocumentGenerator
     {
-        public byte[] GenerateDocument(List<Dictionary<string, object?>> data, List<string> columnHeaders, List<int> columnWidths, List<bool> columnIsBold)
+        public byte[] GenerateDocument(List<Dictionary<string, object?>> data, List<ProductAttribute> attributes)
         {
+            var columnHeaders = attributes.Select(a => a.Name).ToList();
+            var columnWidths = attributes.Select(a => a.ColumnWidth).ToList();
+
             using (MemoryStream mem = new MemoryStream())
             {
                 using (WordprocessingDocument wordDocument = WordprocessingDocument.Create(mem, WordprocessingDocumentType.Document))
@@ -19,30 +23,30 @@ namespace InventoryGenerator.Api.Generators
                     mainPart.Document = new Document();
                     Body body = mainPart.Document.AppendChild(new Body());
 
-                    // Configure section margins for document (standard 1 inch / 1440 dxa)
+                    // Margins
                     SectionProperties sectionProps = new SectionProperties();
                     PageMargin pageMargin = new PageMargin() { Top = 1440, Bottom = 1440, Left = 1440, Right = 1440 };
                     sectionProps.Append(pageMargin);
                     body.Append(sectionProps);
 
-                    // Add title
+                    // Title
                     Paragraph titleParagraph = new Paragraph();
                     ParagraphProperties titleParaProps = new ParagraphProperties(
                         new Justification() { Val = JustificationValues.Center },
-                        new SpacingBetweenLines() { After = "240" } // 12pt space after title
+                        new SpacingBetweenLines() { After = "240" }
                     );
                     titleParagraph.Append(titleParaProps);
                     Run titleRun = new Run(new Text("Inventory Report"));
                     RunProperties titleRunProps = new RunProperties(
                         new RunFonts() { Ascii = "Calibri", HighAnsi = "Calibri" },
-                        new FontSize() { Val = "32" }, // 16pt
+                        new FontSize() { Val = "32" },
                         new Bold()
                     );
                     titleRun.Append(titleRunProps);
                     titleParagraph.Append(titleRun);
                     body.Append(titleParagraph);
 
-                    // Scale column widths to fit a total of ~9350 dxa (standard printable width)
+                    // Width scaling
                     int maxTableWidth = 9350;
                     int totalInputWidth = columnWidths.Sum();
                     List<int> scaledWidths = new List<int>();
@@ -58,15 +62,13 @@ namespace InventoryGenerator.Api.Generators
 
                     Table table = new Table();
 
-                    // Table properties
                     TableProperties tableProperties = new TableProperties(
-                        new TableWidth { Width = "5000", Type = TableWidthUnitValues.Pct }, // 100% page width
+                        new TableWidth { Width = "5000", Type = TableWidthUnitValues.Pct },
                         new TableIndentation { Width = 0, Type = TableWidthUnitValues.Dxa },
                         new TableLayout { Type = TableLayoutValues.Fixed },
                         new TableJustification { Val = TableRowAlignmentValues.Center }
                     );
 
-                    // Default cell margins (padding) - top/bottom: 120 dxa (~6pt), left/right: 180 dxa (~9pt)
                     TableCellMargin defaultMargins = new TableCellMargin(
                         new TopMargin() { Width = "120", Type = TableWidthUnitValues.Dxa },
                         new BottomMargin() { Width = "120", Type = TableWidthUnitValues.Dxa },
@@ -75,7 +77,6 @@ namespace InventoryGenerator.Api.Generators
                     );
                     tableProperties.Append(defaultMargins);
 
-                    // Table borders (sleek, light gray borders)
                     TableBorders tableBorders = new TableBorders(
                         new TopBorder { Val = BorderValues.Single, Size = 4, Color = "CCCCCC" },
                         new BottomBorder { Val = BorderValues.Single, Size = 4, Color = "CCCCCC" },
@@ -87,7 +88,6 @@ namespace InventoryGenerator.Api.Generators
                     tableProperties.Append(tableBorders);
                     table.AppendChild(tableProperties);
 
-                    // Add Table Grid
                     TableGrid tableGrid = new TableGrid();
                     foreach (int width in scaledWidths)
                     {
@@ -95,7 +95,7 @@ namespace InventoryGenerator.Api.Generators
                     }
                     table.Append(tableGrid);
 
-                    // 1. Add Header Row
+                    // 1. Header Row
                     TableRow headerRow = new TableRow();
                     TableRowProperties headerRowProps = new TableRowProperties(new TableRowHeight() { Val = 400 });
                     headerRow.Append(headerRowProps);
@@ -105,7 +105,7 @@ namespace InventoryGenerator.Api.Generators
                         TableCell headerCell = new TableCell();
                         TableCellProperties cellProps = new TableCellProperties(
                             new TableCellWidth { Type = TableWidthUnitValues.Dxa, Width = scaledWidths[i].ToString() },
-                            new Shading() { Val = ShadingPatternValues.Clear, Color = "auto", Fill = "D9E2F3" } // light blue header
+                            new Shading() { Val = ShadingPatternValues.Clear, Color = "auto", Fill = "D9E2F3" }
                         );
                         headerCell.Append(cellProps);
 
@@ -116,7 +116,7 @@ namespace InventoryGenerator.Api.Generators
                         Run run = new Run(new Text(columnHeaders[i]));
                         RunProperties runProps = new RunProperties(
                             new RunFonts() { Ascii = "Calibri", HighAnsi = "Calibri" },
-                            new FontSize() { Val = "20" }, // 10pt
+                            new FontSize() { Val = "20" },
                             new Bold()
                         );
                         run.Append(runProps);
@@ -127,16 +127,17 @@ namespace InventoryGenerator.Api.Generators
                     }
                     table.Append(headerRow);
 
-                    // 2. Add Data Rows
+                    // 2. Data Rows
                     foreach (var rowData in data)
                     {
                         TableRow row = new TableRow();
                         TableRowProperties rowProps = new TableRowProperties(new TableRowHeight() { Val = 300 });
                         row.Append(rowProps);
 
-                        for (int i = 0; i < columnHeaders.Count; i++)
+                        for (int i = 0; i < attributes.Count; i++)
                         {
-                            string header = columnHeaders[i];
+                            var attr = attributes[i];
+                            string header = attr.Name;
                             object? value = rowData.ContainsKey(header) ? rowData[header] : "";
                             string textValue = value?.ToString() ?? string.Empty;
 
@@ -158,10 +159,18 @@ namespace InventoryGenerator.Api.Generators
                                 new RunFonts() { Ascii = "Calibri", HighAnsi = "Calibri" },
                                 new FontSize() { Val = "20" }
                             );
-                            
-                            if (columnIsBold.Count > i && columnIsBold[i])
+
+                            if (attr.IsBold)
                             {
                                 runProps.Append(new Bold());
+                            }
+                            if (attr.IsItalic)
+                            {
+                                runProps.Append(new Italic());
+                            }
+                            if (attr.IsUnderline)
+                            {
+                                runProps.Append(new Underline() { Val = UnderlineValues.Single });
                             }
 
                             run.Append(runProps);

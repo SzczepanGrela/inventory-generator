@@ -31,11 +31,11 @@ app.MapGet("/api/attributes/default", () =>
 {
     var defaultAttributes = new List<ProductAttribute>
     {
-        new ProductAttribute { Name = "Towar", Type = AttributeType.String, CanBeEmpty = false, ColumnWidth = 1500, IsBold = false },
-        new ProductAttribute { Name = "J.M.", Type = AttributeType.Enum, CanBeEmpty = false, EnumValues = new() { "Szt", "Kg", "L" }, ColumnWidth = 400, IsBold = false },
-        new ProductAttribute { Name = "Ilość", Type = AttributeType.Int, CanBeEmpty = false, ColumnWidth = 800, IsBold = false },
-        new ProductAttribute { Name = "Wartość", Type = AttributeType.Double, CanBeEmpty = false, ColumnWidth = 800, IsBold = false },
-        new ProductAttribute { Name = "Magazyn", Type = AttributeType.Int, CanBeEmpty = false, ColumnWidth = 800, IsBold = false }
+        new ProductAttribute { Name = "Towar", Type = AttributeType.String, CanBeEmpty = false, ColumnWidth = 1500, IsBold = false, IsItalic = false, IsUnderline = false },
+        new ProductAttribute { Name = "J.M.", Type = AttributeType.Enum, CanBeEmpty = false, EnumValues = new() { "Szt", "Kg", "L" }, ColumnWidth = 400, IsBold = false, IsItalic = false, IsUnderline = false },
+        new ProductAttribute { Name = "Ilość", Type = AttributeType.Int, CanBeEmpty = false, ColumnWidth = 800, IsBold = false, IsItalic = false, IsUnderline = false },
+        new ProductAttribute { Name = "Wartość", Type = AttributeType.Double, CanBeEmpty = false, ColumnWidth = 800, IsBold = false, IsItalic = false, IsUnderline = false },
+        new ProductAttribute { Name = "Magazyn", Type = AttributeType.Int, CanBeEmpty = false, ColumnWidth = 800, IsBold = false, IsItalic = false, IsUnderline = false }
     };
     return Results.Ok(defaultAttributes);
 });
@@ -49,10 +49,6 @@ app.MapPost("/api/export/{format}", (ExportPayload payload, string format) =>
     }
 
     var attributes = payload.Attributes;
-    var headers = attributes.Select(a => a.Name).ToList();
-    var widths = attributes.Select(a => a.ColumnWidth).ToList();
-    var bolds = attributes.Select(a => a.IsBold).ToList();
-
     var data = payload.Products.Select(p => p.Attributes).ToList();
 
     IDocumentGenerator generator;
@@ -82,7 +78,7 @@ app.MapPost("/api/export/{format}", (ExportPayload payload, string format) =>
 
     try
     {
-        var fileBytes = generator.GenerateDocument(data, headers, widths, bolds);
+        var fileBytes = generator.GenerateDocument(data, attributes);
         var fileName = $"inventory_{DateTime.Now:yyyyMMdd_HHmmss}.{fileExtension}";
         return Results.File(fileBytes, contentType, fileName);
     }

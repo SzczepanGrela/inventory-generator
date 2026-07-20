@@ -564,6 +564,8 @@ select:focus {
 /* Utility layout formatting */
 .text-align-right { text-align: right !important; }
 .font-bold { font-weight: 700 !important; }
+.font-italic { font-style: italic !important; }
+.font-underline { text-decoration: underline !important; }
 
 /* Column manager grid */
 .attributes-manager {

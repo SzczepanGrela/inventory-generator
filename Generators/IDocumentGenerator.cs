@@ -1,7 +1,10 @@
+using System.Collections.Generic;
+using InventoryGenerator.Api.Models;
+
 namespace InventoryGenerator.Api.Generators
 {
     public interface IDocumentGenerator
     {
-        byte[] GenerateDocument(List<Dictionary<string, object?>> data, List<string> columnHeaders, List<int> columnWidths, List<bool> columnIsBold);
+        byte[] GenerateDocument(List<Dictionary<string, object?>> data, List<ProductAttribute> attributes);
     }
 }

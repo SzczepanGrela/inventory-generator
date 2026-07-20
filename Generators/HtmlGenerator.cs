@@ -2,13 +2,17 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Text;
+using InventoryGenerator.Api.Models;
 
 namespace InventoryGenerator.Api.Generators
 {
     public class HtmlGenerator : IDocumentGenerator
     {
-        public byte[] GenerateDocument(List<Dictionary<string, object?>> data, List<string> columnHeaders, List<int> columnWidths, List<bool> columnIsBold)
+        public byte[] GenerateDocument(List<Dictionary<string, object?>> data, List<ProductAttribute> attributes)
         {
+            var columnHeaders = attributes.Select(a => a.Name).ToList();
+            var columnWidths = attributes.Select(a => a.ColumnWidth).ToList();
+
             var sb = new StringBuilder();
             sb.AppendLine("<!DOCTYPE html>");
             sb.AppendLine("<html lang=\"en\">");
@@ -28,6 +32,8 @@ namespace InventoryGenerator.Api.Generators
             sb.AppendLine("    tr:hover { background-color: #f1f5f9; }");
             sb.AppendLine("    .text-right { text-align: right; }");
             sb.AppendLine("    .bold { font-weight: bold; }");
+            sb.AppendLine("    .italic { font-style: italic; }");
+            sb.AppendLine("    .underline { text-decoration: underline; }");
             sb.AppendLine("  </style>");
             sb.AppendLine("</head>");
             sb.AppendLine("<body>");
@@ -59,21 +65,23 @@ namespace InventoryGenerator.Api.Generators
             foreach (var row in data)
             {
                 sb.AppendLine("          <tr>");
-                for (int i = 0; i < columnHeaders.Count; i++)
+                for (int i = 0; i < attributes.Count; i++)
                 {
-                    string header = columnHeaders[i];
+                    var attr = attributes[i];
+                    string header = attr.Name;
                     object? val = row.ContainsKey(header) ? row[header] : "";
                     string str = val?.ToString() ?? string.Empty;
                     
                     bool alignRight = IsNumeric(val);
-                    bool isBold = columnIsBold.Count > i && columnIsBold[i];
+                    var classes = new List<string>();
+                    if (alignRight) classes.Add("text-right");
+                    if (attr.IsBold) classes.Add("bold");
+                    if (attr.IsItalic) classes.Add("italic");
+                    if (attr.IsUnderline) classes.Add("underline");
                     
-                    string cssClasses = "";
-                    if (alignRight && isBold) cssClasses = "class=\"text-right bold\"";
-                    else if (alignRight) cssClasses = "class=\"text-right\"";
-                    else if (isBold) cssClasses = "class=\"bold\"";
+                    string classAttr = classes.Count > 0 ? $"class=\"{string.Join(" ", classes)}\"" : "";
                     
-                    sb.AppendLine($"            <td {cssClasses}>{WebUtility.HtmlEncode(str)}</td>");
+                    sb.AppendLine($"            <td {classAttr}>{WebUtility.HtmlEncode(str)}</td>");
                 }
                 sb.AppendLine("          </tr>");
             }

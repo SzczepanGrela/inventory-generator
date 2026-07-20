@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 namespace InventoryGenerator.Api.Models
@@ -23,5 +24,7 @@ namespace InventoryGenerator.Api.Models
         public List<string> EnumValues { get; set; } = new();
         public int ColumnWidth { get; set; } = 800;
         public bool IsBold { get; set; }
+        public bool IsItalic { get; set; }
+        public bool IsUnderline { get; set; }
     }
 }

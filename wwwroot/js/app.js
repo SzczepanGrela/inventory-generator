@@ -40,6 +40,8 @@ const elements = {
   newAttrWidth: document.getElementById('new-attr-width'),
   newAttrEmpty: document.getElementById('new-attr-empty'),
   newAttrBold: document.getElementById('new-attr-bold'),
+  newAttrItalic: document.getElementById('new-attr-italic'),
+  newAttrUnderline: document.getElementById('new-attr-underline'),
   addAttributeBtn: document.getElementById('add-attribute-btn'),
   
   // Actions
@@ -391,6 +393,12 @@ function renderInventoryTable() {
       if (attr.isBold) {
         td.classList.add('font-bold');
       }
+      if (attr.isItalic) {
+        td.classList.add('font-italic');
+      }
+      if (attr.isUnderline) {
+        td.classList.add('font-underline');
+      }
 
       tr.appendChild(td);
     });
@@ -442,7 +450,11 @@ function renderAttributesSettings() {
     tr.appendChild(widthTd);
 
     const boldTd = document.createElement('td');
-    boldTd.innerText = attr.isBold ? getTranslation('opt_yes') : getTranslation('opt_no');
+    const styles = [];
+    if (attr.isBold) styles.push('<strong>B</strong>');
+    if (attr.isItalic) styles.push('<em>I</em>');
+    if (attr.isUnderline) styles.push('<u>U</u>');
+    boldTd.innerHTML = styles.length > 0 ? styles.join(' ') : '<span style="color: var(--text-muted);">-</span>';
     tr.appendChild(boldTd);
 
     const actionTd = document.createElement('td');
@@ -470,6 +482,8 @@ function addAttributeLocally() {
   const name = elements.newAttrName.value.trim();
   const type = elements.newAttrType.value;
   const isBold = elements.newAttrBold.checked;
+  const isItalic = elements.newAttrItalic ? elements.newAttrItalic.checked : false;
+  const isUnderline = elements.newAttrUnderline ? elements.newAttrUnderline.checked : false;
   const canBeEmpty = elements.newAttrEmpty.checked;
   const width = parseInt(elements.newAttrWidth.value) || 800;
   
@@ -488,7 +502,7 @@ function addAttributeLocally() {
     return;
   }
 
-  const newAttr = { name, type, canBeEmpty, enumValues, columnWidth: width, isBold };
+  const newAttr = { name, type, canBeEmpty, enumValues, columnWidth: width, isBold, isItalic, isUnderline };
 
   if (appState.editingAttributeIndex !== null) {
     // Edit mode: replace the attribute at the editing index
@@ -524,7 +538,9 @@ function editAttributeLocally(index) {
   elements.newAttrName.value = attr.name;
   elements.newAttrType.value = attr.type;
   elements.newAttrEmpty.checked = attr.canBeEmpty;
-  elements.newAttrBold.checked = attr.isBold;
+  elements.newAttrBold.checked = !!attr.isBold;
+  if (elements.newAttrItalic) elements.newAttrItalic.checked = !!attr.isItalic;
+  if (elements.newAttrUnderline) elements.newAttrUnderline.checked = !!attr.isUnderline;
   elements.newAttrWidth.value = attr.columnWidth;
 
   if (attr.type === 'Enum') {
@@ -554,6 +570,8 @@ function clearAttributeForm() {
   elements.newAttrName.value = '';
   elements.newAttrEnum.value = '';
   elements.newAttrBold.checked = false;
+  if (elements.newAttrItalic) elements.newAttrItalic.checked = false;
+  if (elements.newAttrUnderline) elements.newAttrUnderline.checked = false;
   elements.newAttrEmpty.checked = true;
   elements.newAttrWidth.value = '800';
   elements.newAttrEnumGroup.style.display = 'none';
@@ -801,6 +819,12 @@ function renderDocxPreview() {
       if (attr.isBold) {
         td.style.fontWeight = 'bold';
       }
+      if (attr.isItalic) {
+        td.style.fontStyle = 'italic';
+      }
+      if (attr.isUnderline) {
+        td.style.textDecoration = 'underline';
+      }
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
@@ -872,6 +896,12 @@ function renderHtmlPreview() {
       }
       if (attr.isBold) {
         td.style.fontWeight = 'bold';
+      }
+      if (attr.isItalic) {
+        td.style.fontStyle = 'italic';
+      }
+      if (attr.isUnderline) {
+        td.style.textDecoration = 'underline';
       }
       tr.appendChild(td);
     });
