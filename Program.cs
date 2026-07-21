@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
 using InventoryGenerator.Api.Models;
 using InventoryGenerator.Api.Generators;
@@ -27,9 +29,22 @@ builder.Services.AddCors(options =>
     });
 });
 
+// Configure Rate Limiting to protect export endpoints against DoS
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddFixedWindowLimiter("exportPolicy", opt =>
+    {
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.PermitLimit = 30; // Max 30 exports per minute
+        opt.QueueLimit = 0;
+    });
+});
+
 var app = builder.Build();
 
 app.UseCors();
+app.UseRateLimiter();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -93,7 +108,7 @@ app.MapPost("/api/export/{format}", (ExportPayload payload, string format) =>
     {
         return Results.Problem($"Failed to generate document: {ex.Message}");
     }
-});
+}).RequireRateLimiting("exportPolicy");
 
 app.Run();
 
