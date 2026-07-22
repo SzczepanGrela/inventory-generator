@@ -16,12 +16,18 @@ let appState = {
   nextProductId: 1,
   editingProductId: null,
   editingAttributeIndex: null,
+  isEdited: getCookie('inventory_is_edited') === 'true',
   currentLanguage: getCookie('inventory_lang') || 'en',
   translations: {},
   currentTheme: getCookie('inventory_theme') || 'light',
   currentExportFormat: null,
   apiBase: window.location.origin
 };
+
+function markAsEdited(state = true) {
+  appState.isEdited = state;
+  setCookie('inventory_is_edited', state ? 'true' : 'false');
+}
 
 // DOM Elements
 const elements = {
@@ -145,7 +151,7 @@ async function loadLocalData() {
       appState.attributes = JSON.parse(savedAttributes);
     } else {
       // Fetch default attributes template from server if localStorage is empty
-      const res = await fetch(`${appState.apiBase}/api/attributes/default`);
+      const res = await fetch(`${appState.apiBase}/api/attributes/default/${appState.currentLanguage}`);
       if (res.ok) {
         appState.attributes = await res.json();
         saveAttributesToLocalStorage();
@@ -188,6 +194,19 @@ async function loadLanguage(lang) {
     appState.translations = await response.json();
     appState.currentLanguage = lang;
     setCookie('inventory_lang', lang);
+    
+    if (!appState.isEdited) {
+      try {
+        const attrRes = await fetch(`${appState.apiBase}/api/attributes/default/${lang}`);
+        if (attrRes.ok) {
+          appState.attributes = await attrRes.json();
+          saveAttributesToLocalStorage();
+        }
+      } catch (err) {
+        console.error('Failed to load localized defaults:', err);
+      }
+    }
+
     translatePage();
     updateLangUI();
   } catch (error) {
@@ -537,6 +556,7 @@ function addAttributeLocally() {
 
   clearAttributeForm();
   saveAttributesToLocalStorage();
+  markAsEdited();
   renderUI();
 }
 
@@ -593,16 +613,18 @@ function clearAttributeForm() {
 function removeAttributeLocally(index) {
   appState.attributes.splice(index, 1);
   saveAttributesToLocalStorage();
+  markAsEdited();
   renderUI();
   showToast(getTranslation('toast_col_removed'), 'info');
 }
 
 async function resetAttributesToDefault() {
   if (confirm(getTranslation('confirm_reset_attr'))) {
-    const res = await fetch(`${appState.apiBase}/api/attributes/default`);
+    const res = await fetch(`${appState.apiBase}/api/attributes/default/${appState.currentLanguage}`);
     if (res.ok) {
       appState.attributes = await res.json();
       saveAttributesToLocalStorage();
+      markAsEdited(false);
       renderUI();
       showToast(getTranslation('toast_attr_saved'), 'info');
     }
@@ -611,6 +633,7 @@ async function resetAttributesToDefault() {
 
 function saveAttributesLocally() {
   saveAttributesToLocalStorage();
+  markAsEdited();
   renderUI();
   showToast(getTranslation('toast_attr_saved'), 'success');
 }
@@ -662,6 +685,7 @@ function handleFormSubmit(e) {
   }
 
   saveProductsToLocalStorage();
+  markAsEdited();
   exitEditMode();
   renderInventoryTable();
 }
@@ -700,6 +724,7 @@ function deleteProduct(id) {
 
   appState.products = appState.products.filter(p => p.id !== id);
   saveProductsToLocalStorage();
+  markAsEdited();
   showToast(`${getTranslation('toast_prod_deleted')}${id}`, 'info');
   renderInventoryTable();
 }
@@ -710,6 +735,7 @@ function clearAllProducts() {
   appState.products = [];
   appState.nextProductId = 1;
   saveProductsToLocalStorage();
+  markAsEdited();
   showToast(getTranslation('toast_all_cleared'), 'info');
   renderInventoryTable();
 }
@@ -972,6 +998,7 @@ function importProjectFromJson(e) {
 
       saveAttributesToLocalStorage();
       saveProductsToLocalStorage();
+      markAsEdited();
       
       exitEditMode();
       renderUI();

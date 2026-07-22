@@ -49,9 +49,18 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 // 1. Get Default Attributes Endpoint (Stateless template for new users)
-app.MapGet("/api/attributes/default", () => 
+app.MapGet("/api/attributes/default/{lang?}", (string? lang) => 
 {
-    var defaultAttributes = new List<ProductAttribute>
+    bool isEn = (lang ?? "en").ToLower() == "en";
+    
+    var defaultAttributes = isEn ? new List<ProductAttribute>
+    {
+        new ProductAttribute { Name = "Item", Type = AttributeType.String, CanBeEmpty = false, ColumnWidth = 1500, IsBold = false, IsItalic = false, IsUnderline = false },
+        new ProductAttribute { Name = "UOM", Type = AttributeType.Enum, CanBeEmpty = false, EnumValues = new() { "Pcs", "Kg", "L" }, ColumnWidth = 400, IsBold = false, IsItalic = false, IsUnderline = false },
+        new ProductAttribute { Name = "Quantity", Type = AttributeType.Int, CanBeEmpty = false, ColumnWidth = 800, IsBold = false, IsItalic = false, IsUnderline = false },
+        new ProductAttribute { Name = "Value", Type = AttributeType.Double, CanBeEmpty = false, ColumnWidth = 800, IsBold = false, IsItalic = false, IsUnderline = false },
+        new ProductAttribute { Name = "Warehouse", Type = AttributeType.Int, CanBeEmpty = false, ColumnWidth = 800, IsBold = false, IsItalic = false, IsUnderline = false }
+    } : new List<ProductAttribute>
     {
         new ProductAttribute { Name = "Towar", Type = AttributeType.String, CanBeEmpty = false, ColumnWidth = 1500, IsBold = false, IsItalic = false, IsUnderline = false },
         new ProductAttribute { Name = "J.M.", Type = AttributeType.Enum, CanBeEmpty = false, EnumValues = new() { "Szt", "Kg", "L" }, ColumnWidth = 400, IsBold = false, IsItalic = false, IsUnderline = false },
