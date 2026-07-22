@@ -1,3 +1,14 @@
+// Cookie Helpers for User Preferences
+function setCookie(name, value, days = 365) {
+  const expires = new Date(Date.now() + days * 864e5).toUTCString();
+  document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires};path=/;SameSite=Lax`;
+}
+
+function getCookie(name) {
+  const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 // Application State - Local First
 let appState = {
   attributes: [],
@@ -5,9 +16,9 @@ let appState = {
   nextProductId: 1,
   editingProductId: null,
   editingAttributeIndex: null,
-  currentLanguage: localStorage.getItem('inventory_lang') || 'pl',
+  currentLanguage: getCookie('inventory_lang') || 'en',
   translations: {},
-  currentTheme: localStorage.getItem('inventory_theme') || 'light',
+  currentTheme: getCookie('inventory_theme') || 'light',
   currentExportFormat: null,
   apiBase: window.location.origin
 };
@@ -176,7 +187,7 @@ async function loadLanguage(lang) {
     if (!response.ok) throw new Error(`Could not load translations for: ${lang}`);
     appState.translations = await response.json();
     appState.currentLanguage = lang;
-    localStorage.setItem('inventory_lang', lang);
+    setCookie('inventory_lang', lang);
     translatePage();
     updateLangUI();
   } catch (error) {
@@ -247,7 +258,7 @@ function toggleTheme() {
 function setTheme(theme) {
   appState.currentTheme = theme;
   elements.htmlElement.setAttribute('data-theme', theme);
-  localStorage.setItem('inventory_theme', theme);
+  setCookie('inventory_theme', theme);
 }
 
 // ----------------------------------------------------
