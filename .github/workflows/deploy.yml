@@ -1,0 +1,21 @@
+name: Deploy to VPS via Tailscale SSH
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    steps:
+      - name: Connect to Tailnet
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Execute Deploy Launcher via Tailscale SSH
+        run: |
+          ssh -o StrictHostKeyChecking=no inventory-generator@hetznervps "/home/inventory-generator/deploy-launcher.sh"
