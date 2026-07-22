@@ -16,6 +16,11 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
-      - name: Execute Deploy Launcher via Tailscale SSH
+      - name: Setup SSH Key Agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Execute Deploy Launcher via SSH
         run: |
-          ssh -o StrictHostKeyChecking=no inventory-generator@hetznervps "/home/inventory-generator/deploy-launcher.sh"
+          ssh -o StrictHostKeyChecking=no -p 2137 inventory-generator@100.105.105.105 "/home/inventory-generator/deploy-launcher.sh"
