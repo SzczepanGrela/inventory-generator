@@ -118,6 +118,7 @@ body {
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
+  min-height: 72px;
 }
 
 .header-logo {
@@ -141,6 +142,7 @@ body {
 .subtitle {
   font-size: 0.82rem;
   color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 /* Controls Header */
@@ -203,32 +205,6 @@ body {
 [data-theme="dark"] .sun-icon { display: block; }
 [data-theme="dark"] .moon-icon { display: none; }
 
-.api-status {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  background: var(--bg-color);
-  padding: 0.4rem 0.8rem;
-  border-radius: 50px;
-  font-size: 0.78rem;
-  border: 1px solid var(--panel-border);
-}
-
-.status-indicator {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background-color: var(--text-muted);
-}
-
-.status-indicator.online {
-  background-color: var(--success);
-}
-
-.status-indicator.offline {
-  background-color: var(--danger);
-}
-
 /* Main Layout Grid */
 .main-layout {
   display: grid;
@@ -270,6 +246,9 @@ body {
   align-items: center;
   gap: 0.5rem;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Header icon accent colors */
@@ -409,6 +388,7 @@ select:focus {
   border: 1px solid transparent;
   cursor: pointer;
   transition: var(--transition);
+  white-space: nowrap;
 }
 
 .btn-block {
