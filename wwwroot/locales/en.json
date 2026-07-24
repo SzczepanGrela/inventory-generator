@@ -57,5 +57,14 @@
   "btn_export_json": "Save Project (JSON)",
   "btn_import_json": "Load Project (JSON)",
   "toast_import_success": "Project imported successfully!",
-  "toast_import_error": "Import error: Invalid file format."
+  "toast_import_error": "Import error: Invalid file format.",
+  "placeholder_col_name": "e.g. Serial Number",
+  "enum_values_label": "Dropdown options (comma-separated)",
+  "placeholder_col_enum": "e.g. A, B, C",
+  "type_string": "Text",
+  "type_int": "Integer",
+  "type_double": "Decimal",
+  "type_datetime": "Date & Time",
+  "type_bool": "Yes / No",
+  "type_enum": "Dropdown Selection"
 }

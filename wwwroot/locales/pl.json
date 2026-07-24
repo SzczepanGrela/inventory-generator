@@ -57,5 +57,14 @@
   "btn_export_json": "Zapisz projekt (JSON)",
   "btn_import_json": "Wgraj projekt (JSON)",
   "toast_import_success": "Projekt zaimportowany pomyślnie!",
-  "toast_import_error": "Błąd importu: Nieprawidłowy format pliku."
+  "toast_import_error": "Błąd importu: Nieprawidłowy format pliku.",
+  "placeholder_col_name": "np. Numer seryjny",
+  "enum_values_label": "Opcje wyboru (po przecinku)",
+  "placeholder_col_enum": "np. A, B, C",
+  "type_string": "Tekst",
+  "type_int": "Liczba całkowita",
+  "type_double": "Liczba dziesiętna",
+  "type_datetime": "Data i czas",
+  "type_bool": "Tak / Nie",
+  "type_enum": "Lista wyboru"
 }
