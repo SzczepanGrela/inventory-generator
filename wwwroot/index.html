@@ -138,22 +138,22 @@
                 <div class="attribute-form-grid">
                   <div class="form-group">
                     <label for="new-attr-name" data-i18n="col_name">Nazwa kolumny</label>
-                    <input type="text" id="new-attr-name" placeholder="np. Numer seryjny">
+                    <input type="text" id="new-attr-name" placeholder="np. Numer seryjny" data-i18n="placeholder_col_name">
                   </div>
                   <div class="form-group">
                     <label for="new-attr-type" data-i18n="col_type">Typ</label>
                     <select id="new-attr-type">
-                      <option value="String">Text</option>
-                      <option value="Int">Integer</option>
-                      <option value="Double">Decimal</option>
-                      <option value="DateTime">Date & Time</option>
-                      <option value="Bool">Yes / No</option>
-                      <option value="Enum">Dropdown Selection</option>
+                      <option value="String" data-i18n="type_string">Text</option>
+                      <option value="Int" data-i18n="type_int">Integer</option>
+                      <option value="Double" data-i18n="type_double">Decimal</option>
+                      <option value="DateTime" data-i18n="type_datetime">Date & Time</option>
+                      <option value="Bool" data-i18n="type_bool">Yes / No</option>
+                      <option value="Enum" data-i18n="type_enum">Dropdown Selection</option>
                     </select>
                   </div>
                   <div class="form-group" id="enum-values-group" style="display: none;">
-                    <label for="new-attr-enum">Enum Values (comma-separated)</label>
-                    <input type="text" id="new-attr-enum" placeholder="e.g. A, B, C">
+                    <label for="new-attr-enum" data-i18n="enum_values_label">Enum Values (comma-separated)</label>
+                    <input type="text" id="new-attr-enum" placeholder="e.g. A, B, C" data-i18n="placeholder_col_enum">
                   </div>
                   <div class="form-group">
                     <label for="new-attr-width" data-i18n="col_width">Szerokość</label>
