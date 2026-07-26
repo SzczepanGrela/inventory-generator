@@ -24,7 +24,10 @@ jobs:
         run: dotnet restore
 
       - name: Build Project (Release)
-        run: dotnet build --no-restore -c Release
+        run: dotnet build inventory-generator.sln --no-restore -c Release
+
+      - name: Run Tests (Unit & Integration)
+        run: dotnet test inventory-generator.sln --no-build -c Release
 
   # 2. Build Docker Image (Container Compilation Test)
   build-docker-image:
