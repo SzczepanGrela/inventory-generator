@@ -24,7 +24,7 @@
   "btn_download": "Download File",
   "btn_back": "Back to Edit",
   "empty_state_title": "No items in inventory",
-  "empty_state_desc": "Add some products using the form on the left to get started.",
+  "empty_state_desc": "Add some products using the \"Add Product\" button to get started.",
   "items_badge_one": "1 item",
   "items_badge_few": "items",
   "items_badge_many": "items",
@@ -66,5 +66,12 @@
   "type_double": "Decimal",
   "type_datetime": "Date & Time",
   "type_bool": "Yes / No",
-  "type_enum": "Dropdown Selection"
+  "type_enum": "Dropdown Selection",
+  "btn_save_project": "Save",
+  "btn_load_project": "Load",
+  "danger_zone_title": "Danger Zone",
+  "danger_zone_desc": "These operations are irreversible and will permanently delete data from your browser.",
+  "btn_cancel": "Cancel",
+  "btn_ok": "OK",
+  "modal_confirm_title": "Confirm Action"
 }

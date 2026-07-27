@@ -26,182 +26,65 @@
       </div>
       
       <div class="header-controls">
-        <!-- i18n switcher -->
-        <div class="lang-selector">
-          <button id="lang-pl-btn" class="btn-lang active">PL</button>
-          <button id="lang-en-btn" class="btn-lang">EN</button>
+        <!-- File Actions Toolbar -->
+        <div class="toolbar-actions">
+          <div class="dropdown">
+            <button class="btn btn-outline dropdown-toggle" id="export-dropdown-btn">
+              <i class="fa-solid fa-file-export"></i> <span class="hide-mobile" data-i18n="panel_export_title">Eksportuj</span> <i class="fa-solid fa-chevron-down ms-1"></i>
+            </button>
+            <div class="dropdown-menu hide" id="export-dropdown-menu">
+              <button id="export-docx-btn" class="dropdown-item"><i class="fa-solid fa-file-word text-blue"></i> Word (.docx)</button>
+              <button id="export-csv-btn" class="dropdown-item"><i class="fa-solid fa-file-csv text-green"></i> Excel (.csv)</button>
+              <button id="export-html-btn" class="dropdown-item"><i class="fa-solid fa-file-code text-orange"></i> Webpage (.html)</button>
+            </div>
+          </div>
+          
+          <button id="export-json-btn" class="btn btn-primary" title="Zapisz Projekt">
+            <i class="fa-solid fa-floppy-disk"></i> <span class="hide-mobile" data-i18n="btn_save_project">Zapisz</span>
+          </button>
+          
+          <button id="import-json-trigger-btn" class="btn btn-secondary" title="Wgraj Projekt">
+            <i class="fa-solid fa-upload"></i> <span class="hide-mobile" data-i18n="btn_load_project">Wgraj</span>
+          </button>
+          <input type="file" id="import-json-file" accept=".json" class="hide">
+
+          <button id="settings-modal-trigger-btn" class="btn btn-outline" title="Ustawienia Kolumn">
+            <i class="fa-solid fa-sliders"></i>
+          </button>
         </div>
-        
-        <!-- Theme Toggle -->
-        <button id="theme-toggle-btn" class="btn-theme" title="Toggle Light/Dark Theme">
-          <i class="fa-solid fa-moon moon-icon"></i>
-          <i class="fa-solid fa-sun sun-icon"></i>
-        </button>
+
+        <div class="separator"></div>
+
+        <!-- Extra options -->
+        <div class="header-options">
+          <!-- i18n switcher -->
+          <div class="lang-selector">
+            <button id="lang-pl-btn" class="btn-lang active">PL</button>
+            <button id="lang-en-btn" class="btn-lang">EN</button>
+          </div>
+          
+          <!-- Theme Toggle -->
+          <button id="theme-toggle-btn" class="btn-theme" title="Toggle Light/Dark Theme">
+            <i class="fa-solid fa-moon moon-icon"></i>
+            <i class="fa-solid fa-sun sun-icon"></i>
+          </button>
+        </div>
       </div>
     </header>
 
     <div class="main-layout">
-      <!-- Left Sidebar: Controls & Inputs -->
-      <aside class="sidebar">
-        <!-- Add/Edit Product Panel -->
-        <div class="panel">
-          <div class="panel-header">
-            <h2>
-              <i class="fa-solid fa-circle-plus header-icon-blue"></i>
-              <span id="form-title" data-i18n="panel_add_title">Dodaj nowy produkt</span>
-            </h2>
-            <button id="cancel-edit-btn" class="btn btn-sm btn-icon-only hide" title="Cancel Edit">
-              <i class="fa-solid fa-times"></i>
-            </button>
-          </div>
-          <form id="product-form" class="panel-body">
-            <!-- Dynamic Fields will be rendered here by JS -->
-            <div id="dynamic-fields-container"></div>
-            
-            <button type="submit" class="btn btn-primary btn-block" id="submit-product-btn">
-              <i class="fa-solid fa-plus"></i> <span data-i18n="btn_add_product">Dodaj produkt</span>
-            </button>
-          </form>
-        </div>
-
-        <!-- Export Actions Panel -->
-        <div class="panel">
-          <div class="panel-header">
-            <h2><i class="fa-solid fa-file-export header-icon-green"></i> <span data-i18n="panel_export_title">Eksportuj raport</span></h2>
-          </div>
-          <div class="panel-body export-actions">
-            <button id="export-docx-btn" class="btn btn-gradient btn-docx">
-              <i class="fa-solid fa-file-word"></i> Word (.docx)
-            </button>
-            <button id="export-csv-btn" class="btn btn-gradient btn-csv">
-              <i class="fa-solid fa-file-csv"></i> Excel (.csv)
-            </button>
-            <button id="export-html-btn" class="btn btn-gradient btn-html">
-              <i class="fa-solid fa-file-code"></i> Webpage (.html)
-            </button>
-          </div>
-        </div>
-
-        <!-- Project Backup Panel -->
-        <div class="panel">
-          <div class="panel-header">
-            <h2><i class="fa-solid fa-floppy-disk header-icon-blue"></i> <span data-i18n="btn_export_json">Kopia zapasowa</span></h2>
-          </div>
-          <div class="panel-body export-actions">
-            <button id="export-json-btn" class="btn btn-primary btn-block">
-              <i class="fa-solid fa-download"></i> <span data-i18n="btn_export_json">Zapisz projekt (JSON)</span>
-            </button>
-            <button id="import-json-trigger-btn" class="btn btn-secondary btn-block">
-              <i class="fa-solid fa-upload"></i> <span data-i18n="btn_import_json">Wgraj projekt (JSON)</span>
-            </button>
-            <input type="file" id="import-json-file" accept=".json" class="hide">
-            <hr class="panel-divider">
-            <button id="clear-all-btn" class="btn btn-danger btn-block">
-              <i class="fa-solid fa-trash-can"></i> <span data-i18n="btn_clear_all">Wyczyść wszystkie dane</span>
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      <!-- Right Main Content: Table & Settings -->
+      <!-- Main Content: Table -->
       <main class="content-area">
-        <!-- Settings / Attributes Panel (Toggleable) -->
-        <div class="panel collapsible collapsed" id="attributes-panel">
-          <div class="panel-header toggle-header" id="attributes-toggle">
-            <h2><i class="fa-solid fa-sliders header-icon-gray"></i> <span data-i18n="panel_settings_title">Ustawienia kolumn i atrybutów</span></h2>
-            <i class="fa-solid fa-chevron-down toggle-icon"></i>
-          </div>
-          <div class="panel-body collapsible-content">
-            <!-- Current Attributes List -->
-            <div class="attributes-manager">
-              <div class="attributes-table-wrapper">
-                <table class="settings-table">
-                  <thead>
-                    <tr>
-                      <th data-i18n="col_name">Nazwa kolumny</th>
-                      <th data-i18n="col_type">Typ</th>
-                      <th data-i18n="col_empty">Puste dozwolone</th>
-                      <th data-i18n="col_width">Szerokość</th>
-                      <th data-i18n="col_bold">Pogrubienie</th>
-                      <th data-i18n="col_action">Akcja</th>
-                    </tr>
-                  </thead>
-                  <tbody id="attributes-list-body">
-                    <!-- Loaded dynamically -->
-                  </tbody>
-                </table>
-              </div>
-
-              <!-- Add New Attribute Form -->
-              <div class="add-attribute-section">
-                <h3 data-i18n="add_column_section_title">Dodaj niestandardową kolumnę</h3>
-                <div class="attribute-form-grid">
-                  <div class="form-group">
-                    <label for="new-attr-name" data-i18n="col_name">Nazwa kolumny</label>
-                    <input type="text" id="new-attr-name" placeholder="np. Numer seryjny" data-i18n="placeholder_col_name">
-                  </div>
-                  <div class="form-group">
-                    <label for="new-attr-type" data-i18n="col_type">Typ</label>
-                    <select id="new-attr-type">
-                      <option value="String" data-i18n="type_string">Text</option>
-                      <option value="Int" data-i18n="type_int">Integer</option>
-                      <option value="Double" data-i18n="type_double">Decimal</option>
-                      <option value="DateTime" data-i18n="type_datetime">Date & Time</option>
-                      <option value="Bool" data-i18n="type_bool">Yes / No</option>
-                      <option value="Enum" data-i18n="type_enum">Dropdown Selection</option>
-                    </select>
-                  </div>
-                  <div class="form-group" id="enum-values-group" style="display: none;">
-                    <label for="new-attr-enum" data-i18n="enum_values_label">Enum Values (comma-separated)</label>
-                    <input type="text" id="new-attr-enum" placeholder="e.g. A, B, C" data-i18n="placeholder_col_enum">
-                  </div>
-                  <div class="form-group">
-                    <label for="new-attr-width" data-i18n="col_width">Szerokość</label>
-                    <input type="number" id="new-attr-width" value="800" min="200" max="4000">
-                  </div>
-                  <div class="form-group row-align-checkbox">
-                    <div class="checkbox-wrapper">
-                      <input type="checkbox" id="new-attr-empty" checked>
-                      <label for="new-attr-empty" data-i18n="field_label_empty">Puste dozwolone</label>
-                    </div>
-                    <div class="checkbox-wrapper">
-                      <input type="checkbox" id="new-attr-bold">
-                      <label for="new-attr-bold" data-i18n="field_label_bold">Pogrubienie</label>
-                    </div>
-                    <div class="checkbox-wrapper">
-                      <input type="checkbox" id="new-attr-italic">
-                      <label for="new-attr-italic" data-i18n="field_label_italic">Kursywa</label>
-                    </div>
-                    <div class="checkbox-wrapper">
-                      <input type="checkbox" id="new-attr-underline">
-                      <label for="new-attr-underline" data-i18n="field_label_underline">Podkreślenie</label>
-                    </div>
-                  </div>
-                  <div class="form-group action-align">
-                    <button type="button" id="add-attribute-btn" class="btn btn-secondary">
-                      <i class="fa-solid fa-plus-square"></i> <span data-i18n="btn_add_column">Dodaj kolumnę</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            <div class="attributes-actions">
-              <button id="save-attributes-btn" class="btn btn-success">
-                <i class="fa-solid fa-floppy-disk"></i> <span data-i18n="btn_save_settings">Zapisz ustawienia kolumn</span>
-              </button>
-              <button id="reset-attributes-btn" class="btn btn-outline">
-                <i class="fa-solid fa-rotate-left"></i> <span data-i18n="btn_reset_defaults">Przywróć domyślne</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
         <!-- Inventory List Panel -->
         <div class="panel flex-grow">
-          <div class="panel-header">
-            <h2><i class="fa-solid fa-list-check header-icon-blue"></i> <span data-i18n="panel_records_title">Rekordy spisu</span></h2>
-            <div class="badge" id="product-count-badge">0 items</div>
+          <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 1rem;">
+              <h2><i class="fa-solid fa-list-check header-icon-blue"></i> <span data-i18n="panel_records_title">Rekordy spisu</span></h2>
+              <div class="badge" id="product-count-badge">0 items</div>
+            </div>
+            <button id="open-product-modal-btn" class="btn btn-primary btn-sm">
+              <i class="fa-solid fa-plus"></i> <span data-i18n="btn_add_product">Dodaj produkt</span>
+            </button>
           </div>
           <div class="panel-body table-container">
             <!-- Table View -->
@@ -230,6 +113,32 @@
     </div>
   </div>
 
+  <!-- Product Add/Edit Modal -->
+  <div id="product-modal" class="modal-backdrop hide">
+    <div class="modal modal-md">
+      <div class="modal-header">
+        <h2>
+          <i class="fa-solid fa-circle-plus header-icon-blue" id="product-modal-icon"></i>
+          <span id="form-title" data-i18n="panel_add_title">Dodaj nowy produkt</span>
+        </h2>
+        <button id="close-product-modal-btn" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body modal-body-noscroll-x">
+        <form id="product-form">
+          <!-- Dynamic Fields will be rendered here by JS -->
+          <div id="dynamic-fields-container" class="dynamic-fields-grid"></div>
+          
+          <div class="modal-footer modal-footer-inline">
+            <button type="button" id="cancel-product-btn" class="btn btn-outline" data-i18n="btn_cancel">Anuluj</button>
+            <button type="submit" class="btn btn-primary" id="submit-product-btn">
+              <i class="fa-solid fa-check"></i> <span id="submit-product-text" data-i18n="btn_add_product">Dodaj produkt</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <!-- Document Preview Modal -->
   <div id="preview-modal" class="modal-backdrop hide">
     <div class="modal">
@@ -247,6 +156,125 @@
         <button id="modal-close-btn" class="btn btn-outline">
           <i class="fa-solid fa-arrow-left"></i> <span data-i18n="btn_back">Powrót</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal" class="modal-backdrop hide">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h2><i class="fa-solid fa-sliders header-icon-gray"></i> <span data-i18n="panel_settings_title">Ustawienia kolumn i atrybutów</span></h2>
+        <button id="close-settings-modal-btn" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="attributes-manager">
+          <div class="attributes-table-wrapper">
+            <table class="settings-table">
+              <thead>
+                <tr>
+                  <th data-i18n="col_name">Nazwa kolumny</th>
+                  <th data-i18n="col_type">Typ</th>
+                  <th data-i18n="col_empty">Puste dozwolone</th>
+                  <th data-i18n="col_width">Szerokość</th>
+                  <th data-i18n="col_bold">Pogrubienie</th>
+                  <th data-i18n="col_action">Akcja</th>
+                </tr>
+              </thead>
+              <tbody id="attributes-list-body">
+                <!-- Loaded dynamically -->
+              </tbody>
+            </table>
+          </div>
+
+          <div class="add-attribute-section">
+            <h3 data-i18n="add_column_section_title">Dodaj niestandardową kolumnę</h3>
+            <div class="attribute-form-grid">
+              <div class="form-group">
+                <label for="new-attr-name" data-i18n="col_name">Nazwa kolumny</label>
+                <input type="text" id="new-attr-name" placeholder="np. Numer seryjny" data-i18n="placeholder_col_name">
+              </div>
+              <div class="form-group">
+                <label for="new-attr-type" data-i18n="col_type">Typ</label>
+                <select id="new-attr-type">
+                  <option value="String" data-i18n="type_string">Text</option>
+                  <option value="Int" data-i18n="type_int">Integer</option>
+                  <option value="Double" data-i18n="type_double">Decimal</option>
+                  <option value="DateTime" data-i18n="type_datetime">Date & Time</option>
+                  <option value="Bool" data-i18n="type_bool">Yes / No</option>
+                  <option value="Enum" data-i18n="type_enum">Dropdown Selection</option>
+                </select>
+              </div>
+              <div class="form-group" id="enum-values-group" style="display: none;">
+                <label for="new-attr-enum" data-i18n="enum_values_label">Enum Values (comma-separated)</label>
+                <input type="text" id="new-attr-enum" placeholder="e.g. A, B, C" data-i18n="placeholder_col_enum">
+              </div>
+              <div class="form-group">
+                <label for="new-attr-width" data-i18n="col_width">Szerokość</label>
+                <input type="number" id="new-attr-width" value="800" min="200" max="4000">
+              </div>
+              <div class="form-group row-align-checkbox">
+                <div class="checkbox-wrapper">
+                  <input type="checkbox" id="new-attr-empty" checked>
+                  <label for="new-attr-empty" data-i18n="field_label_empty">Puste dozwolone</label>
+                </div>
+                <div class="checkbox-wrapper">
+                  <input type="checkbox" id="new-attr-bold">
+                  <label for="new-attr-bold" data-i18n="field_label_bold">Pogrubienie</label>
+                </div>
+                <div class="checkbox-wrapper">
+                  <input type="checkbox" id="new-attr-italic">
+                  <label for="new-attr-italic" data-i18n="field_label_italic">Kursywa</label>
+                </div>
+                <div class="checkbox-wrapper">
+                  <input type="checkbox" id="new-attr-underline">
+                  <label for="new-attr-underline" data-i18n="field_label_underline">Podkreślenie</label>
+                </div>
+              </div>
+              <div class="form-group action-align">
+                <button type="button" id="add-attribute-btn" class="btn btn-secondary">
+                  <i class="fa-solid fa-plus-square"></i> <span data-i18n="btn_add_column">Dodaj kolumnę</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="attributes-actions">
+          <button id="save-attributes-btn" class="btn btn-success">
+            <i class="fa-solid fa-floppy-disk"></i> <span data-i18n="btn_save_settings">Zapisz ustawienia kolumn</span>
+          </button>
+          <button id="reset-attributes-btn" class="btn btn-outline">
+            <i class="fa-solid fa-rotate-left"></i> <span data-i18n="btn_reset_defaults">Przywróć domyślne</span>
+          </button>
+        </div>
+
+        <div class="danger-zone">
+          <h3 data-i18n="danger_zone_title">Strefa Niebezpieczna</h3>
+          <p class="subtitle" data-i18n="danger_zone_desc" style="margin-bottom: 15px;">Te operacje są nieodwracalne i trwale usuną dane z Twojej przeglądarki.</p>
+          <button id="clear-all-btn" class="btn btn-danger">
+            <i class="fa-solid fa-trash-can"></i> <span data-i18n="btn_clear_all">Wyczyść wszystkie dane</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm Modal -->
+  <div id="confirm-modal" class="modal-backdrop hide" style="z-index: 10000;">
+    <div class="modal modal-sm" style="max-width: 400px; text-align: center;">
+      <div class="modal-header" style="border-bottom: none; justify-content: center; padding-bottom: 0;">
+        <div class="warning-icon" style="font-size: 3rem; color: var(--danger-color); margin-bottom: 10px;">
+          <i class="fa-solid fa-circle-exclamation"></i>
+        </div>
+      </div>
+      <div class="modal-body" style="padding-top: 0;">
+        <h2 id="confirm-title" style="margin-bottom: 10px; font-size: 1.3rem;">Potwierdź akcję</h2>
+        <p id="confirm-message" style="color: var(--text-secondary);">Czy na pewno chcesz kontynuować?</p>
+      </div>
+      <div class="modal-footer" style="justify-content: center; border-top: none;">
+        <button id="confirm-cancel-btn" class="btn btn-outline" data-i18n="btn_cancel">Anuluj</button>
+        <button id="confirm-ok-btn" class="btn btn-danger" data-i18n="btn_ok">OK</button>
       </div>
     </div>
   </div>

@@ -36,7 +36,14 @@ const elements = {
   productForm: document.getElementById('product-form'),
   formTitle: document.getElementById('form-title'),
   submitProductBtn: document.getElementById('submit-product-btn'),
-  cancelEditBtn: document.getElementById('cancel-edit-btn'),
+  
+  // Product Modal elements
+  openProductModalBtn: document.getElementById('open-product-modal-btn'),
+  productModal: document.getElementById('product-modal'),
+  closeProductModalBtn: document.getElementById('close-product-modal-btn'),
+  cancelProductBtn: document.getElementById('cancel-product-btn'),
+  submitProductText: document.getElementById('submit-product-text'),
+  productModalIcon: document.getElementById('product-modal-icon'),
   
   inventoryTableContainer: document.getElementById('inventory-table-container'),
   inventoryMainTable: document.getElementById('inventory-main-table'),
@@ -45,9 +52,15 @@ const elements = {
   emptyState: document.getElementById('empty-state'),
   productCountBadge: document.getElementById('product-count-badge'),
   
-  attributesToggle: document.getElementById('attributes-toggle'),
   attributesPanel: document.getElementById('attributes-panel'),
   attributesListBody: document.getElementById('attributes-list-body'),
+  
+  // New Layout & Modals
+  exportDropdownBtn: document.getElementById('export-dropdown-btn'),
+  exportDropdownMenu: document.getElementById('export-dropdown-menu'),
+  settingsModalTriggerBtn: document.getElementById('settings-modal-trigger-btn'),
+  settingsModal: document.getElementById('settings-modal'),
+  closeSettingsModalBtn: document.getElementById('close-settings-modal-btn'),
   
   // New Attribute Inputs
   newAttrName: document.getElementById('new-attr-name'),
@@ -101,8 +114,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // Setup Event Listeners
 function setupEventListeners() {
-  elements.attributesToggle.addEventListener('click', () => {
-    elements.attributesPanel.classList.toggle('collapsed');
+  // Toolbar dropdowns and modals
+  elements.exportDropdownBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    elements.exportDropdownMenu.classList.toggle('hide');
+  });
+  
+  document.addEventListener('click', () => {
+    elements.exportDropdownMenu.classList.add('hide');
+  });
+
+  elements.settingsModalTriggerBtn.addEventListener('click', () => {
+    elements.settingsModal.classList.remove('hide');
+  });
+
+  elements.closeSettingsModalBtn.addEventListener('click', () => {
+    elements.settingsModal.classList.add('hide');
   });
 
   elements.newAttrType.addEventListener('change', (e) => {
@@ -118,8 +145,23 @@ function setupEventListeners() {
   elements.saveAttributesBtn.addEventListener('click', saveAttributesLocally);
   elements.resetAttributesBtn.addEventListener('click', resetAttributesToDefault);
 
-  elements.productForm.addEventListener('submit', handleFormSubmit);
-  elements.cancelEditBtn.addEventListener('click', exitEditMode);
+  elements.productForm.addEventListener('submit', (e) => {
+    handleFormSubmit(e);
+    elements.productModal.classList.add('hide');
+  });
+
+  elements.openProductModalBtn.addEventListener('click', () => {
+    exitEditMode();
+    elements.productModal.classList.remove('hide');
+  });
+
+  const closeProductModal = () => {
+    elements.productModal.classList.add('hide');
+    exitEditMode();
+  };
+
+  elements.closeProductModalBtn.addEventListener('click', closeProductModal);
+  elements.cancelProductBtn.addEventListener('click', closeProductModal);
 
   elements.clearAllBtn.addEventListener('click', clearAllProducts);
 
@@ -141,6 +183,40 @@ function setupEventListeners() {
   elements.modalDownloadBtn.addEventListener('click', executeDownload);
 }
 
+function showConfirmModal(titleText, messageText, onConfirmCallback) {
+  const confirmModal = document.getElementById('confirm-modal');
+  const titleEl = document.getElementById('confirm-title');
+  const messageEl = document.getElementById('confirm-message');
+  const cancelBtn = document.getElementById('confirm-cancel-btn');
+  const okBtn = document.getElementById('confirm-ok-btn');
+  
+  // Jeśli podany ciąg znaków jest kluczem translacyjnym, pobierz go; w przeciwnym razie użyj oryginalnego
+  const translatedTitle = getTranslation(titleText) || titleText;
+  
+  titleEl.textContent = translatedTitle;
+  messageEl.textContent = messageText;
+  
+  confirmModal.classList.remove('hide');
+  
+  // Cleanup
+  const cleanup = () => {
+    confirmModal.classList.add('hide');
+    cancelBtn.removeEventListener('click', onCancel);
+    okBtn.removeEventListener('click', onOk);
+  };
+  
+  const onCancel = () => {
+    cleanup();
+  };
+  
+  const onOk = () => {
+    cleanup();
+    onConfirmCallback();
+  };
+  
+  cancelBtn.addEventListener('click', onCancel);
+  okBtn.addEventListener('click', onOk);
+}
 // ----------------------------------------------------
 // LOCAL-FIRST DATA STORAGE (localStorage)
 // ----------------------------------------------------
@@ -618,8 +694,8 @@ function removeAttributeLocally(index) {
   showToast(getTranslation('toast_col_removed'), 'info');
 }
 
-async function resetAttributesToDefault() {
-  if (confirm(getTranslation('confirm_reset_attr'))) {
+function resetAttributesToDefault() {
+  showConfirmModal('modal_confirm_title', getTranslation('confirm_reset_attr'), async () => {
     const res = await fetch(`${appState.apiBase}/api/attributes/default/${appState.currentLanguage}`);
     if (res.ok) {
       appState.attributes = await res.json();
@@ -628,7 +704,7 @@ async function resetAttributesToDefault() {
       renderUI();
       showToast(getTranslation('toast_attr_saved'), 'info');
     }
-  }
+  });
 }
 
 function saveAttributesLocally() {
@@ -693,8 +769,10 @@ function handleFormSubmit(e) {
 function enterEditMode(product) {
   appState.editingProductId = product.id;
   elements.formTitle.innerText = `${getTranslation('panel_edit_title')} #${product.id}`;
-  elements.submitProductBtn.innerHTML = `<i class="fa-solid fa-check"></i> ${getTranslation('btn_save_changes')}`;
-  elements.cancelEditBtn.classList.remove('hide');
+  elements.submitProductText.innerText = getTranslation('btn_save_changes');
+  elements.productModalIcon.className = 'fa-solid fa-pen-to-square header-icon-blue';
+  
+  elements.productModal.classList.remove('hide');
 
   appState.attributes.forEach(attr => {
     const input = document.getElementById(`field-${attr.name}`);
@@ -708,36 +786,37 @@ function enterEditMode(product) {
     }
   });
 
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  elements.productModal.classList.remove('hide');
 }
 
 function exitEditMode() {
   appState.editingProductId = null;
   elements.formTitle.innerText = getTranslation('panel_add_title');
-  elements.submitProductBtn.innerHTML = `<i class="fa-solid fa-plus"></i> ${getTranslation('btn_add_product')}`;
-  elements.cancelEditBtn.classList.add('hide');
+  elements.submitProductText.innerText = getTranslation('btn_add_product');
+  elements.productModalIcon.className = 'fa-solid fa-circle-plus header-icon-blue';
   elements.productForm.reset();
 }
 
 function deleteProduct(id) {
-  if (!confirm(`${getTranslation('confirm_delete_prod')}${id}?`)) return;
-
-  appState.products = appState.products.filter(p => p.id !== id);
-  saveProductsToLocalStorage();
-  markAsEdited();
-  showToast(`${getTranslation('toast_prod_deleted')}${id}`, 'info');
-  renderInventoryTable();
+  showConfirmModal('modal_confirm_title', `${getTranslation('confirm_delete_prod')}${id}?`, () => {
+    appState.products = appState.products.filter(p => p.id !== id);
+    saveProductsToLocalStorage();
+    markAsEdited();
+    showToast(`${getTranslation('toast_prod_deleted')}${id}`, 'info');
+    renderInventoryTable();
+  });
 }
 
 function clearAllProducts() {
-  if (!confirm(getTranslation('confirm_clear_all'))) return;
-
-  appState.products = [];
-  appState.nextProductId = 1;
-  saveProductsToLocalStorage();
-  markAsEdited();
-  showToast(getTranslation('toast_all_cleared'), 'info');
-  renderInventoryTable();
+  showConfirmModal('danger_zone_title', getTranslation('confirm_clear_all'), () => {
+    appState.products = [];
+    appState.nextProductId = 1;
+    saveProductsToLocalStorage();
+    markAsEdited();
+    showToast(getTranslation('toast_all_cleared'), 'info');
+    renderInventoryTable();
+    elements.settingsModal.classList.add('hide');
+  });
 }
 
 // ----------------------------------------------------

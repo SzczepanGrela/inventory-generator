@@ -24,7 +24,7 @@
   "btn_download": "Pobierz plik",
   "btn_back": "Powrót do edycji",
   "empty_state_title": "Brak przedmiotów w spisie",
-  "empty_state_desc": "Dodaj produkty za pomocą formularza po lewej stronie, aby rozpocząć.",
+  "empty_state_desc": "Dodaj produkty za pomocą przycisku \"Dodaj produkt\", aby rozpocząć.",
   "items_badge_one": "1 element",
   "items_badge_few": "elementy",
   "items_badge_many": "elementów",
@@ -66,5 +66,12 @@
   "type_double": "Liczba dziesiętna",
   "type_datetime": "Data i czas",
   "type_bool": "Tak / Nie",
-  "type_enum": "Lista wyboru"
+  "type_enum": "Lista wyboru",
+  "btn_save_project": "Zapisz",
+  "btn_load_project": "Wgraj",
+  "danger_zone_title": "Strefa Niebezpieczna",
+  "danger_zone_desc": "Te operacje są nieodwracalne i trwale usuną dane z Twojej przeglądarki.",
+  "btn_cancel": "Anuluj",
+  "btn_ok": "OK",
+  "modal_confirm_title": "Potwierdź akcję"
 }

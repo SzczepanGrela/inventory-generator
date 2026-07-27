@@ -15,10 +15,10 @@ Originally created as a Windows Forms desktop application, this project was rede
 │    Frontend (Browser SPA)    │  ◄──────────────────► │    Backend (API Server)     │
 │                              │                       │                             │
 │  • Local Storage (State)     │  POST /api/export     │ • C# ASP.NET Core 8         │
-│  • HTML5 / CSS3 (Vanilla)    │  GET /api/attributes  │ • Stateless Minimal API     │
-│  • i18n Localization (PL/EN) │                       │ • OpenXML SDK 3.5           │
-│  • Dynamic Form rendering    │                       │ • Rate Limiting Middleware  │
-│  • Live Spreadsheet Table    │                       │ • Docker Containerized      │
+│  • HTML5 / CSS3 (Responsive) │  GET /api/attributes  │ • Stateless Minimal API     │
+│  • SaaS Modal-based CRUD     │                       │ • OpenXML SDK 3.5           │
+│  • i18n Localization (PL/EN) │                       │ • Rate Limiting Middleware  │
+│  • Full-width Data Table     │                       │ • Docker Containerized      │
 └──────────────────────────────┘                       └─────────────────────────────┘
 ```
 
@@ -35,11 +35,11 @@ The application state (products, configuration, translations) is fully maintaine
 ## Key Features
 
 1. **Dynamic Schema Customization**: 
-   Add, remove, or modify inventory columns (attributes) directly in the web UI. Supported data types: Text, Integer, Decimal, Date & Time, Yes/No, Enum.
+   Add, remove, or modify inventory columns (attributes) via a dedicated Modal interface. Supported data types: Text, Integer, Decimal, Date & Time, Yes/No, Enum.
 2. **Internationalization (i18n)**:
    Seamless runtime switching between English and Polish languages, saving user preferences automatically in cookies.
-3. **Interactive Spreadsheet Grid**: 
-   Shows all database entries instantly. Columns adapt to settings (e.g., right-aligning numbers, bolding specific columns, etc.).
+3. **Full-width Interactive Spreadsheet**: 
+   Shows all database entries instantly in a mobile-responsive table. Columns adapt to settings (e.g., right-aligning numbers, bolding specific columns, etc.).
 4. **Professional Document Exporter**:
    - **Word (.docx)**: Generates a styled table with custom margins, gray borders, blue highlighted headers, and adaptive text formatting matching C# models.
    - **Excel (.csv)**: Generates a CSV file using semicolon delimiters, fully escaped strings, and a UTF-8 BOM.
@@ -112,10 +112,10 @@ Początkowo stworzona jako aplikacja pulpitowa Windows Forms, projekt ten zosta�
 │    Frontend (Browser SPA)    │  ◄──────────────────► │    Backend (API Server)     │
 │                              │                       │                             │
 │  • Local Storage (State)     │  POST /api/export     │ • C# ASP.NET Core 8         │
-│  • HTML5 / CSS3 (Vanilla)    │  GET /api/attributes  │ • Stateless Minimal API     │
-│  • i18n Lokalizacja (PL/EN)  │                       │ • OpenXML SDK 3.5           │
-│  • Dynamiczne Formularze     │                       │ • Rate Limiting Middleware  │
-│  • Aktywny Arkusz (Tabela)   │                       │ • Konteneryzacja Docker     │
+│  • HTML5 / CSS3 (Responsywny)│  GET /api/attributes  │ • Stateless Minimal API     │
+│  • SaaS Modal-based CRUD     │                       │ • OpenXML SDK 3.5           │
+│  • i18n Lokalizacja (PL/EN)  │                       │ • Rate Limiting Middleware  │
+│  • Pełnoekranowa Tabela Danych│                      │ • Konteneryzacja Docker     │
 └──────────────────────────────┘                       └─────────────────────────────┘
 ```
 
@@ -132,11 +132,11 @@ Stan aplikacji (produkty, konfiguracja, tłumaczenia) jest w pełni utrzymywany 
 ## Kluczowe Funkcje
 
 1. **Dynamiczna Personalizacja Schematu**: 
-   Dodawaj, usuwaj lub modyfikuj kolumny inwentarza (atrybuty) bezpośrednio w interfejsie przeglądarki. Obsługiwane typy danych to: Tekst, Liczba całkowita, Ułamek, Data i Czas, Tak/Nie, Lista wyboru.
+   Dodawaj, usuwaj lub modyfikuj kolumny inwentarza (atrybuty) bezpośrednio z dedykowanego okna Modal. Obsługiwane typy danych to: Tekst, Liczba całkowita, Ułamek, Data i Czas, Tak/Nie, Lista wyboru.
 2. **Internacjonalizacja (i18n)**:
    Płynne przełączanie w czasie rzeczywistym między językiem polskim i angielskim, z zachowaniem preferencji użytkownika w ciasteczkach.
-3. **Interaktywna Tabela Arkusza**: 
-   Wyświetla błyskawicznie wszystkie pozycje. Kolumny dostosowują się do ustawień (np. wyrównywanie do prawej, pogrubianie itp.).
+3. **Pełnoekranowa Interaktywna Tabela**: 
+   Wyświetla błyskawicznie wszystkie pozycje w responsywnym układzie (mobile-ready). Kolumny dostosowują się do ustawień (np. wyrównywanie do prawej, pogrubianie itp.).
 4. **Profesjonalny Eksporter Dokumentów**:
    - **Word (.docx)**: Generuje oskryptowaną tabelę z odpowiednimi marginesami, szarymi obramowaniami, podświetlonymi na niebiesko nagłówkami i adaptacyjnym formatowaniem tekstu zgrywającym się z definicjami modelu C#.
    - **Excel (.csv)**: Generuje zoptymalizowany plik CSV ze znacznikami średnika, poprawionymi cudzysłowami i znacznikiem UTF-8 BOM.
