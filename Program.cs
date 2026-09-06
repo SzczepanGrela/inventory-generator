@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -9,7 +10,19 @@ using Microsoft.Extensions.DependencyInjection;
 using InventoryGenerator.Api.Models;
 using InventoryGenerator.Api.Generators;
 
+static string GetRateLimitPartitionKey(HttpContext context)
+{
+    var connectingIp = context.Request.Headers["CF-Connecting-IP"].ToString();
+    if (IPAddress.TryParse(connectingIp, out var parsedConnectingIp))
+    {
+        return parsedConnectingIp.ToString();
+    }
+
+    return context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+}
+
 var builder = WebApplication.CreateBuilder(args);
+var releaseRevision = Environment.GetEnvironmentVariable("RELEASE_REVISION") ?? "development";
 
 // Bind to PORT environment variable if provided by cloud host (Render, Fly.io, Railway, etc.)
 var port = Environment.GetEnvironmentVariable("PORT");
@@ -33,12 +46,16 @@ builder.Services.AddCors(options =>
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    options.AddFixedWindowLimiter("exportPolicy", opt =>
-    {
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.PermitLimit = 30; // Max 30 exports per minute
-        opt.QueueLimit = 0;
-    });
+    options.AddPolicy("exportPolicy", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: GetRateLimitPartitionKey(context),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                AutoReplenishment = true,
+                Window = TimeSpan.FromMinutes(1),
+                PermitLimit = 30,
+                QueueLimit = 0
+            }));
 });
 
 var app = builder.Build();
@@ -47,6 +64,12 @@ app.UseCors();
 app.UseRateLimiter();
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+app.MapGet("/api/health", () => Results.Ok(new
+{
+    status = "ok",
+    revision = releaseRevision
+}));
 
 // 1. Get Default Attributes Endpoint (Stateless template for new users)
 app.MapGet("/api/attributes/default/{lang?}", (string? lang) => 

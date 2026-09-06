@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Inventory Generator">
+  <rect width="64" height="64" rx="14" fill="#0f172a"/>
+  <path d="M13 19 32 10l19 9-19 9-19-9Z" fill="#38bdf8"/>
+  <path d="m13 29 19 9 19-9v16L32 54 13 45V29Z" fill="#0ea5e9"/>
+  <path d="M32 28v26M13 29l19 9 19-9" fill="none" stroke="#e0f2fe" stroke-width="3" stroke-linejoin="round"/>
+</svg>
