@@ -556,7 +556,7 @@ select:focus {
 }
 
 .attributes-table-wrapper {
-  max-height: 400px;
+  max-height: 320px;
   overflow-y: auto;
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-sm);
@@ -694,7 +694,7 @@ select:focus {
 .modal {
   width: 90%;
   max-width: 950px;
-  max-height: 85vh;
+  max-height: 92vh;
   background: var(--panel-bg);
   border-radius: var(--radius-lg);
   border: 1px solid var(--panel-border);
@@ -945,8 +945,8 @@ select:focus {
 
 /* Danger Zone */
 .danger-zone {
-  margin-top: 1.5rem;
-  padding: 1.5rem;
+  margin-top: 1.2rem;
+  padding: 1.2rem;
   background-color: rgba(239, 68, 68, 0.05);
   border: 1px solid rgba(239, 68, 68, 0.2);
   border-radius: var(--radius-md);
