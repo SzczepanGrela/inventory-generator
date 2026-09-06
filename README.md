@@ -80,14 +80,6 @@ To run the automated test suite (Unit and Integration tests):
 dotnet test inventory-generator.sln
 ```
 
----
-
-## DevOps & CI/CD
-This project features a fully automated CI/CD pipeline using **GitHub Actions**. Upon every push to the `main` branch:
-1. Validates the .NET Code using `dotnet build`.
-2. Runs the full test suite `dotnet test`.
-3. Triggers a remote deployment over a secure **Tailscale VPN** utilizing `infra/deploy.sh` to update the application running on a VPS in an NGINX Proxy Manager network.
-
 ## License
 This project is licensed under the [MIT License](LICENSE).
 
@@ -176,14 +168,6 @@ Aby uruchomić zestaw zautomatyzowanych testów (Unit oraz Integration tests):
 ```bash
 dotnet test inventory-generator.sln
 ```
-
----
-
-## DevOps i CI/CD
-Ten projekt zawiera w pełni zautomatyzowany łańcuch wdrożeń (pipeline) przy użyciu **GitHub Actions**. Przy każdym przesłaniu zmian na gałąź `main`:
-1. Weryfikuje kod .NET przy użyciu polecenia `dotnet build`.
-2. Odtwarza całą warstwę testów `dotnet test`.
-3. Aktywuje proces zdalnego wdrożenia poprzez bezpieczny tunel VPN w **Tailscale**, wykorzystując skrypt `infra/deploy.sh` w celu zaaktualizowania aplikacji na serwerze (VPS), przypinając go w sieci NGINX Proxy Manager.
 
 ## Licencja
 Projekt ten objęty jest licencją [MIT License](LICENSE).
