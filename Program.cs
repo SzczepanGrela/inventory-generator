@@ -5,6 +5,7 @@ using System.Net;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
 using InventoryGenerator.Api.Models;
@@ -12,17 +13,52 @@ using InventoryGenerator.Api.Generators;
 
 static string GetRateLimitPartitionKey(HttpContext context)
 {
-    var connectingIp = context.Request.Headers["CF-Connecting-IP"].ToString();
-    if (IPAddress.TryParse(connectingIp, out var parsedConnectingIp))
+    return context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+}
+
+static IReadOnlyList<IPAddress> ParseTrustedProxyIps(string? value)
+{
+    if (string.IsNullOrWhiteSpace(value))
     {
-        return parsedConnectingIp.ToString();
+        return Array.Empty<IPAddress>();
     }
 
-    return context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    var trustedProxies = new List<IPAddress>();
+    foreach (var item in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (!IPAddress.TryParse(item, out var address))
+        {
+            throw new InvalidOperationException($"TRUSTED_PROXY_IPS contains an invalid IP address: '{item}'.");
+        }
+
+        if (!trustedProxies.Contains(address))
+        {
+            trustedProxies.Add(address);
+        }
+    }
+
+    return trustedProxies;
 }
 
 var builder = WebApplication.CreateBuilder(args);
 var releaseRevision = Environment.GetEnvironmentVariable("RELEASE_REVISION") ?? "development";
+var trustedProxyIps = ParseTrustedProxyIps(builder.Configuration["TRUSTED_PROXY_IPS"]);
+
+if (trustedProxyIps.Count > 0)
+{
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
+        options.ForwardLimit = trustedProxyIps.Count;
+        options.KnownNetworks.Clear();
+        options.KnownProxies.Clear();
+
+        foreach (var address in trustedProxyIps)
+        {
+            options.KnownProxies.Add(address);
+        }
+    });
+}
 
 // Bind to PORT environment variable if provided by cloud host (Render, Fly.io, Railway, etc.)
 var port = Environment.GetEnvironmentVariable("PORT");
@@ -59,6 +95,11 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+
+if (trustedProxyIps.Count > 0)
+{
+    app.UseForwardedHeaders();
+}
 
 app.UseCors();
 app.UseRateLimiter();

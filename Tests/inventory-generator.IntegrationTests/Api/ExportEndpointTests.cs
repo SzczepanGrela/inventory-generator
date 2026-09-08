@@ -5,7 +5,10 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using InventoryGenerator.Api.Models;
 
@@ -66,10 +69,13 @@ namespace InventoryGenerator.IntegrationTests.Api
         }
 
         [Fact]
-        public async Task PostExport_ShouldRateLimitEachCloudflareClientIndependently()
+        public async Task PostExport_ShouldRateLimitEachForwardedClientIndependently()
         {
-            var firstClient = _factory.CreateClient();
-            firstClient.DefaultRequestHeaders.Add("CF-Connecting-IP", "198.51.100.10");
+            using var factory = CreateFactory("192.0.2.20,192.0.2.10");
+            var firstClient = CreateProxiedClient(
+                factory,
+                "192.0.2.20",
+                "198.51.100.10, 192.0.2.10");
             var payload = CreatePayload();
 
             for (var request = 0; request < 30; request++)
@@ -81,10 +87,57 @@ namespace InventoryGenerator.IntegrationTests.Api
             using var limitedResponse = await firstClient.PostAsJsonAsync("/api/export/html", payload);
             limitedResponse.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
 
-            var secondClient = _factory.CreateClient();
-            secondClient.DefaultRequestHeaders.Add("CF-Connecting-IP", "198.51.100.11");
+            var secondClient = CreateProxiedClient(
+                factory,
+                "192.0.2.20",
+                "198.51.100.11, 192.0.2.10");
             using var independentResponse = await secondClient.PostAsJsonAsync("/api/export/html", payload);
             independentResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+
+        [Fact]
+        public async Task PostExport_ShouldIgnoreForwardedForFromUnknownProxy()
+        {
+            using var factory = CreateFactory("192.0.2.20,192.0.2.10");
+            var firstClient = CreateProxiedClient(
+                factory,
+                "203.0.113.200",
+                "198.51.100.10");
+            var payload = CreatePayload();
+
+            for (var request = 0; request < 30; request++)
+            {
+                using var response = await firstClient.PostAsJsonAsync("/api/export/html", payload);
+                response.StatusCode.Should().Be(HttpStatusCode.OK);
+            }
+
+            var spoofedClient = CreateProxiedClient(
+                factory,
+                "203.0.113.200",
+                "198.51.100.11");
+            using var spoofedResponse = await spoofedClient.PostAsJsonAsync("/api/export/html", payload);
+            spoofedResponse.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        }
+
+        private WebApplicationFactory<Program> CreateFactory(string trustedProxyIps)
+        {
+            return _factory.WithWebHostBuilder(builder =>
+            {
+                builder.UseSetting("TRUSTED_PROXY_IPS", trustedProxyIps);
+                builder.ConfigureServices(services =>
+                    services.AddSingleton<IStartupFilter>(new TestRemoteIpStartupFilter()));
+            });
+        }
+
+        private static HttpClient CreateProxiedClient(
+            WebApplicationFactory<Program> factory,
+            string remoteIpAddress,
+            string forwardedFor)
+        {
+            var client = factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Test-Remote-IP", remoteIpAddress);
+            client.DefaultRequestHeaders.Add("X-Forwarded-For", forwardedFor);
+            return client;
         }
 
         private static ExportPayload CreatePayload()
@@ -104,6 +157,27 @@ namespace InventoryGenerator.IntegrationTests.Api
                     }
                 }
             };
+        }
+
+        private sealed class TestRemoteIpStartupFilter : IStartupFilter
+        {
+            public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
+            {
+                return app =>
+                {
+                    app.Use(async (context, nextMiddleware) =>
+                    {
+                        var testRemoteIp = context.Request.Headers["X-Test-Remote-IP"].ToString();
+                        if (IPAddress.TryParse(testRemoteIp, out var address))
+                        {
+                            context.Connection.RemoteIpAddress = address;
+                        }
+
+                        await nextMiddleware();
+                    });
+                    next(app);
+                };
+            }
         }
     }
 }
