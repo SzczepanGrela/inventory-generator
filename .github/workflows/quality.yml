@@ -114,8 +114,30 @@ jobs:
             exit 1
           fi
 
+          # 1. Verify health and revision
           docker exec "$container_name" \
             curl --fail --silent --show-error "http://127.0.0.1:8080/api/health"
+
+          # 2. Verify container runs as non-root
+          user_id="$(docker exec "$container_name" id -u)"
+          if [[ "$user_id" == "0" ]]; then
+            echo "Container must run as non-root user (got UID $user_id)" >&2
+            exit 1
+          fi
+
+          # 3. Verify security headers
+          docker exec "$container_name" \
+            curl --fail --silent -I "http://127.0.0.1:8080/" | grep -i "content-security-policy"
+
+          # 4. Smoke-test small exports for all 3 formats
+          smoke_payload='{"attributes":[{"name":"Item","type":"String"}],"products":[{"id":1,"attributes":{"Item":"SmokeTest"}}]}'
+          for format in csv html docx; do
+            docker exec "$container_name" \
+              curl --fail --silent --show-error \
+              -H "Content-Type: application/json" \
+              -d "$smoke_payload" \
+              "http://127.0.0.1:8080/api/export/$format" >/dev/null
+          done
       - name: Scan fixable high and critical vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

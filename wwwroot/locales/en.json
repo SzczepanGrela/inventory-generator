@@ -73,5 +73,11 @@
   "danger_zone_desc": "These operations are irreversible and will permanently delete data from your browser.",
   "btn_cancel": "Cancel",
   "btn_ok": "OK",
-  "modal_confirm_title": "Confirm Action"
+  "modal_confirm_title": "Confirm Action",
+  "toast_rate_limited": "Export rate limit exceeded. Please wait ",
+  "toast_payload_too_large": "Payload exceeds maximum allowed size of 2 MB.",
+  "toast_storage_full": "Browser storage quota exceeded. Please export project JSON and clear old records.",
+  "aria_close_modal": "Close modal",
+  "aria_theme_toggle": "Toggle light/dark theme",
+  "aria_settings_toggle": "Column and attribute settings"
 }
