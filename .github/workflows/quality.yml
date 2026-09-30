@@ -29,6 +29,8 @@ jobs:
       - run: dotnet restore inventory-generator.sln
       - run: dotnet build inventory-generator.sln --no-restore --configuration Release
       - run: dotnet test inventory-generator.sln --no-build --configuration Release
+      - name: Test release automation (Python)
+        run: python3 -m unittest discover -s tests -v
 
   container:
     name: Container
@@ -168,3 +170,20 @@ jobs:
         run: |
           test "$TEST_RESULT" = success
           test "$CONTAINER_RESULT" = success
+
+  deploy:
+    name: Deploy tested digest
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+    needs: [container, quality-gate]
+    permissions:
+      attestations: read
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit
+    with:
+      digest: ${{ needs.container.outputs.digest }}
+      expected_revision: ${{ github.sha }}
