@@ -1,0 +1,516 @@
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import os
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+
+from infra import coolify_release as release
+from infra import smokecheck
+
+
+APPLICATION_UUID = "b" * 24
+DEPLOYMENT_UUID = "d" * 24
+ROLLBACK_UUID = "r" * 24
+OLD_DIGEST = f"sha256:{'1' * 64}"
+NEW_DIGEST = f"sha256:{'2' * 64}"
+OLD_REVISION = "3" * 40
+NEW_REVISION = "4" * 40
+
+
+def sample_contract() -> dict[str, object]:
+    return {
+        "name": "inventory-generator",
+        "build_pack": "dockerimage",
+        "docker_registry_image_name": "ghcr.io/szczepangrela/inventory-generator",
+        "fqdn": "https://inventory-generator.grela.dev:8080/",
+        "domains": None,
+        "redirect": "both",
+        "ports_exposes": "8080",
+        "ports_mappings": None,
+        "health_check_enabled": True,
+        "health_check_type": "cmd",
+        "health_check_command": "curl --fail --silent --show-error --max-time 4 http://127.0.0.1:8080/api/health",
+        "health_check_interval": 5,
+        "health_check_timeout": 5,
+        "health_check_retries": 10,
+        "health_check_start_period": 10,
+        "custom_labels": None,
+        "custom_network_aliases": None,
+        "destination_type": "App\\Models\\StandaloneDocker",
+        "destination_id": 1,
+        "max_restart_count": 10,
+        "limits_memory": "512m",
+        "limits_memory_swap": "512m",
+        "limits_memory_swappiness": 0,
+        "limits_memory_reservation": "128m",
+        "limits_cpus": "1",
+        "limits_cpu_shares": 1024,
+        "custom_docker_run_options": "--cap-drop ALL --init",
+        "settings": {
+            "connect_to_docker_network": False,
+            "docker_images_to_keep": 2,
+            "is_consistent_container_name_enabled": False,
+            "is_container_label_readonly_enabled": True,
+            "is_force_https_enabled": False,
+            "stop_grace_period": None,
+        },
+    }
+
+
+class FakeClient:
+    def __init__(self, expected: dict[str, object], statuses: list[list[str]]) -> None:
+        self.application = expected | {
+            "id": 1,
+            "uuid": APPLICATION_UUID,
+            "status": "running:healthy",
+            "docker_registry_image_tag": release.digest_to_tag(OLD_DIGEST),
+        }
+        self.statuses_to_queue = [list(values) for values in statuses]
+        self.deployment_statuses: dict[str, list[str]] = {}
+        self.updates: list[str] = []
+        self.queued: list[str] = []
+        self.cancelled: list[str] = []
+        self.application_deployments: list[dict[str, object]] = []
+        self.live_revision = OLD_REVISION
+
+    def get_application(self, application_uuid: str) -> dict[str, object]:
+        assert application_uuid == APPLICATION_UUID
+        return dict(self.application)
+
+    def update_tag(self, application_uuid: str, tag: str) -> None:
+        assert application_uuid == APPLICATION_UUID
+        self.updates.append(tag)
+        self.application["docker_registry_image_tag"] = tag
+
+    def list_application_deployments(
+        self,
+        application_uuid: str,
+    ) -> list[dict[str, object]]:
+        assert application_uuid == APPLICATION_UUID
+        return list(self.application_deployments)
+
+    def queue_deployment(self, application_uuid: str) -> str:
+        assert application_uuid == APPLICATION_UUID
+        deployment_uuid = DEPLOYMENT_UUID if not self.queued else ROLLBACK_UUID
+        self.queued.append(deployment_uuid)
+        self.deployment_statuses[deployment_uuid] = self.statuses_to_queue.pop(0)
+        return deployment_uuid
+
+    def get_deployment(self, deployment_uuid: str) -> dict[str, object]:
+        statuses = self.deployment_statuses[deployment_uuid]
+        status = statuses.pop(0) if len(statuses) > 1 else statuses[0]
+        if status == "finished":
+            tag = self.application["docker_registry_image_tag"]
+            self.live_revision = (
+                NEW_REVISION
+                if tag == release.digest_to_tag(NEW_DIGEST)
+                else OLD_REVISION
+            )
+        return {"deployment_uuid": deployment_uuid, "status": status}
+
+    def cancel_deployment(self, deployment_uuid: str) -> None:
+        self.cancelled.append(deployment_uuid)
+        self.deployment_statuses[deployment_uuid] = ["cancelled"]
+
+
+class TestCoolifyRelease(unittest.TestCase):
+    def setUp(self):
+        self.contract_path = Path("infra/coolify-production.json")
+        self.assertTrue(self.contract_path.exists())
+
+    def test_contract_loaded_matches_sample(self):
+        loaded = release.load_contract(self.contract_path)
+        sample = sample_contract()
+        mismatches = release._compare_contract(loaded, sample)
+        self.assertEqual(mismatches, [])
+
+    def test_digest_and_tag_conversion(self):
+        digest = f"sha256:{'a' * 64}"
+        tag = f"sha256-{'a' * 64}"
+        self.assertEqual(release.digest_to_tag(digest), tag)
+        self.assertEqual(release.tag_to_digest(tag), digest)
+
+        with self.assertRaises(release.ReleaseError):
+            release.digest_to_tag("invalid:123")
+        with self.assertRaises(release.ReleaseError):
+            release.tag_to_digest("invalid-123")
+
+    def test_contract_drift_detection(self):
+        app = sample_contract() | {"uuid": APPLICATION_UUID, "limits_memory": "256m"}
+        with self.assertRaises(release.ReleaseError) as ctx:
+            release.verify_application(app, sample_contract(), APPLICATION_UUID)
+        self.assertIn("limits_memory", str(ctx.exception))
+
+    @patch.dict(os.environ, {"COOLIFY_TOKEN": "test-token"})
+    @patch("infra.coolify_release.verify_image_revision")
+    @patch("infra.coolify_release.check_public_baseline")
+    @patch("infra.coolify_release.check_public_release")
+    def test_happy_path_deployment(
+        self,
+        mock_release_smoke,
+        mock_baseline_smoke,
+        mock_verify_img,
+    ):
+        client = FakeClient(sample_contract(), [["in_progress", "finished"]])
+        args = argparse.Namespace(
+            coolify_url="https://coolify.internal",
+            application_uuid=APPLICATION_UUID,
+            public_url="https://inventory-generator.grela.dev",
+            digest=NEW_DIGEST,
+            expected_revision=NEW_REVISION,
+            contract=self.contract_path,
+            deployment_timeout=5,
+            poll_interval=0.001,
+            settle_checks=1,
+            settle_attempts=3,
+            soak_checks=1,
+        )
+
+        with patch("infra.coolify_release.CoolifyClient", return_value=client):
+            with patch(
+                "infra.coolify_release.read_public_revision",
+                side_effect=lambda url: client.live_revision,
+            ):
+                release.deploy_release(args)
+
+        self.assertEqual(client.updates, [release.digest_to_tag(NEW_DIGEST)])
+        self.assertEqual(client.queued, [DEPLOYMENT_UUID])
+        self.assertEqual(client.cancelled, [])
+        mock_baseline_smoke.assert_called_once()
+        mock_release_smoke.assert_called_once()
+
+    @patch.dict(os.environ, {"COOLIFY_TOKEN": "test-token"})
+    def test_active_deployment_conflict(self):
+        client = FakeClient(sample_contract(), [])
+        client.application_deployments = [{"status": "in_progress"}]
+        args = argparse.Namespace(
+            coolify_url="https://coolify.internal",
+            application_uuid=APPLICATION_UUID,
+            public_url="https://inventory-generator.grela.dev",
+            digest=NEW_DIGEST,
+            expected_revision=NEW_REVISION,
+            contract=self.contract_path,
+            deployment_timeout=5,
+            poll_interval=0.001,
+            settle_checks=1,
+            settle_attempts=3,
+            soak_checks=1,
+        )
+
+        with patch("infra.coolify_release.CoolifyClient", return_value=client):
+            with self.assertRaises(release.ReleaseError) as ctx:
+                release.deploy_release(args)
+            self.assertIn("already running", str(ctx.exception))
+
+    @patch.dict(os.environ, {"COOLIFY_TOKEN": "test-token"})
+    @patch("infra.coolify_release.verify_image_revision")
+    @patch("infra.coolify_release.check_public_baseline")
+    @patch("infra.coolify_release.check_public_release")
+    def test_already_configured_and_active_noop(
+        self,
+        mock_release_smoke,
+        mock_baseline_smoke,
+        mock_verify_img,
+    ):
+        client = FakeClient(sample_contract(), [])
+        client.application["docker_registry_image_tag"] = release.digest_to_tag(NEW_DIGEST)
+        client.live_revision = NEW_REVISION
+
+        args = argparse.Namespace(
+            coolify_url="https://coolify.internal",
+            application_uuid=APPLICATION_UUID,
+            public_url="https://inventory-generator.grela.dev",
+            digest=NEW_DIGEST,
+            expected_revision=NEW_REVISION,
+            contract=self.contract_path,
+            deployment_timeout=5,
+            poll_interval=0.001,
+            settle_checks=1,
+            settle_attempts=3,
+            soak_checks=1,
+        )
+
+        with patch("infra.coolify_release.CoolifyClient", return_value=client):
+            with patch(
+                "infra.coolify_release.read_public_revision",
+                return_value=NEW_REVISION,
+            ):
+                release.deploy_release(args)
+
+        self.assertEqual(client.updates, [])
+        self.assertEqual(client.queued, [])
+        mock_release_smoke.assert_called_once()
+
+    @patch.dict(os.environ, {"COOLIFY_TOKEN": "test-token"})
+    @patch("infra.coolify_release.verify_image_revision")
+    @patch("infra.coolify_release.check_public_baseline")
+    @patch("infra.coolify_release.check_public_release")
+    def test_rollback_on_deployment_failure(
+        self,
+        mock_release_smoke,
+        mock_baseline_smoke,
+        mock_verify_img,
+    ):
+        client = FakeClient(
+            sample_contract(),
+            [
+                ["in_progress", "failed"],   # Candidate fails
+                ["in_progress", "finished"], # Rollback succeeds
+            ],
+        )
+
+        args = argparse.Namespace(
+            coolify_url="https://coolify.internal",
+            application_uuid=APPLICATION_UUID,
+            public_url="https://inventory-generator.grela.dev",
+            digest=NEW_DIGEST,
+            expected_revision=NEW_REVISION,
+            contract=self.contract_path,
+            deployment_timeout=5,
+            poll_interval=0.001,
+            settle_checks=1,
+            settle_attempts=3,
+            soak_checks=1,
+        )
+
+        with patch("infra.coolify_release.CoolifyClient", return_value=client):
+            with patch(
+                "infra.coolify_release.read_public_revision",
+                side_effect=lambda url: client.live_revision,
+            ):
+                with self.assertRaises(release.ReleaseError) as ctx:
+                    release.deploy_release(args)
+                self.assertIn("rollback", str(ctx.exception))
+
+        self.assertEqual(
+            client.updates,
+            [release.digest_to_tag(NEW_DIGEST), release.digest_to_tag(OLD_DIGEST)],
+        )
+        self.assertEqual(client.queued, [DEPLOYMENT_UUID, ROLLBACK_UUID])
+
+    @patch.dict(os.environ, {"COOLIFY_TOKEN": "test-token"})
+    @patch("infra.coolify_release.verify_image_revision")
+    @patch("infra.coolify_release.check_public_baseline")
+    def test_rollback_on_consecutive_probe_failures_during_overlap(
+        self,
+        mock_baseline_smoke,
+        mock_verify_img,
+    ):
+        client = FakeClient(
+            sample_contract(),
+            [
+                ["in_progress", "in_progress", "in_progress", "in_progress"], # Candidate
+                ["in_progress", "finished"],                                   # Rollback
+            ],
+        )
+
+        probe_responses = [
+            OLD_REVISION,  # Baseline
+            release.ReleaseError("down"), # Failure 1
+            release.ReleaseError("down"), # Failure 2
+            release.ReleaseError("down"), # Failure 3 -> triggers cancel & rollback
+            OLD_REVISION,  # Rollback revision checks
+            OLD_REVISION,
+            OLD_REVISION,
+            OLD_REVISION,
+        ]
+
+        def dynamic_probe(url):
+            if probe_responses:
+                val = probe_responses.pop(0)
+                if isinstance(val, Exception):
+                    raise val
+                return val
+            return OLD_REVISION
+
+        args = argparse.Namespace(
+            coolify_url="https://coolify.internal",
+            application_uuid=APPLICATION_UUID,
+            public_url="https://inventory-generator.grela.dev",
+            digest=NEW_DIGEST,
+            expected_revision=NEW_REVISION,
+            contract=self.contract_path,
+            deployment_timeout=5,
+            poll_interval=0.001,
+            settle_checks=1,
+            settle_attempts=3,
+            soak_checks=1,
+        )
+
+        with patch("infra.coolify_release.CoolifyClient", return_value=client):
+            with patch("infra.coolify_release.read_public_revision", side_effect=dynamic_probe):
+                with self.assertRaises(release.ReleaseError) as ctx:
+                    release.deploy_release(args)
+                self.assertIn("three consecutive deployment probes", str(ctx.exception))
+
+        self.assertEqual(client.cancelled, [DEPLOYMENT_UUID])
+        self.assertEqual(client.queued, [DEPLOYMENT_UUID, ROLLBACK_UUID])
+
+
+class TestSmokeCheck(unittest.TestCase):
+    def test_validate_inputs(self):
+        with self.assertRaises(ValueError):
+            smokecheck._validate_inputs("ftp://bad", "a" * 40)
+        with self.assertRaises(ValueError):
+            smokecheck._validate_inputs("http://good.example", "bad-rev")
+
+    @patch("infra.smokecheck._read_json")
+    def test_check_health_success(self, mock_read_json):
+        rev = "a" * 40
+        mock_read_json.return_value = {"status": "ok", "revision": rev}
+        smokecheck.check_health("http://localhost:8080", rev)
+
+    @patch("infra.smokecheck._read_json")
+    def test_check_health_mismatched_revision(self, mock_read_json):
+        mock_read_json.return_value = {"status": "ok", "revision": "b" * 40}
+        with self.assertRaises(ValueError) as ctx:
+            smokecheck.check_health("http://localhost:8080", "a" * 40)
+        self.assertIn("does not match", str(ctx.exception))
+
+    @patch("infra.smokecheck._open")
+    def test_check_assets_missing_security_headers(self, mock_open):
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = b"<!DOCTYPE html><html></html>"
+        mock_response.headers = {}
+        mock_open.return_value.__enter__.return_value = mock_response
+
+        with self.assertRaises(ValueError) as ctx:
+            smokecheck._check_assets("http://localhost:8080", timeout=5, require_security_headers=True)
+        self.assertIn("missing", str(ctx.exception))
+
+    @patch("infra.smokecheck._open")
+    def test_check_assets_valid_security_headers(self, mock_open):
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = b"<!DOCTYPE html><html></html>"
+        mock_response.headers = {
+            "Content-Security-Policy": "default-src 'self'",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "strict-origin-when-cross-origin",
+            "Permissions-Policy": "camera=(), microphone=()",
+        }
+        mock_open.return_value.__enter__.return_value = mock_response
+
+        smokecheck._check_assets("http://localhost:8080", timeout=5, require_security_headers=True)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class TestCoolifyReleaseEdgeCases(unittest.TestCase):
+    @patch.dict(os.environ, {"COOLIFY_TOKEN": "test-token"})
+    @patch("infra.coolify_release.verify_image_revision")
+    @patch("infra.coolify_release.check_public_baseline")
+    def test_uncertain_deployment_request_stops_mutation(
+        self,
+        mock_baseline,
+        mock_verify_img,
+    ):
+        class UncertainClient(FakeClient):
+            def queue_deployment(self, application_uuid: str) -> str:
+                raise release.UncertainDeployment("network dropped during deploy request")
+
+        client = UncertainClient(sample_contract(), [])
+        args = argparse.Namespace(
+            coolify_url="https://coolify.internal",
+            application_uuid=APPLICATION_UUID,
+            public_url="https://inventory-generator.grela.dev",
+            digest=NEW_DIGEST,
+            expected_revision=NEW_REVISION,
+            contract=Path("infra/coolify-production.json"),
+            deployment_timeout=5,
+            poll_interval=0.001,
+            settle_checks=1,
+            settle_attempts=3,
+            soak_checks=1,
+        )
+
+        with patch("infra.coolify_release.CoolifyClient", return_value=client):
+            with patch("infra.coolify_release.read_public_revision", return_value=OLD_REVISION):
+                with self.assertRaises(release.UncertainDeployment) as ctx:
+                    release.deploy_release(args)
+                self.assertIn("network dropped", str(ctx.exception))
+
+        self.assertEqual(client.updates, [release.digest_to_tag(NEW_DIGEST)])
+        self.assertEqual(client.queued, [])
+
+    def test_cancellation_must_reach_terminal_state(self):
+        client = FakeClient(sample_contract(), [])
+        client.deployment_statuses[DEPLOYMENT_UUID] = ["in_progress", "cancelled"]
+
+        with patch("infra.coolify_release.time.sleep", return_value=None):
+            release.cancel_and_confirm(
+                client,
+                DEPLOYMENT_UUID,
+                timeout=1,
+                interval=0.001,
+            )
+
+        self.assertEqual(client.cancelled, [DEPLOYMENT_UUID])
+
+    def test_cancellation_reconciles_error_with_terminal_state(self):
+        class ErrorOnCancelClient(FakeClient):
+            def cancel_deployment(self, deployment_uuid: str) -> None:
+                self.cancelled.append(deployment_uuid)
+                raise release.ReleaseError("HTTP 502 Bad Gateway")
+
+        client = ErrorOnCancelClient(sample_contract(), [])
+        client.deployment_statuses[DEPLOYMENT_UUID] = ["cancelled-by-user"]
+
+        with patch("infra.coolify_release.time.sleep", return_value=None):
+            release.cancel_and_confirm(
+                client,
+                DEPLOYMENT_UUID,
+                timeout=1,
+                interval=0.001,
+            )
+
+        self.assertEqual(client.cancelled, [DEPLOYMENT_UUID])
+
+    @patch("infra.smokecheck._open")
+    def test_smoke_check_attributes_and_exports(self, mock_open):
+        class FakeContext:
+            def __init__(self, resp):
+                self.resp = resp
+            def __enter__(self):
+                return self.resp
+            def __exit__(self, *args):
+                pass
+
+        def fake_open(req, timeout):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            resp = MagicMock()
+            if "/api/attributes/default/en" in url:
+                resp.status = 200
+                resp.read.return_value = json.dumps([{"name": "Item"}]).encode()
+            elif "/api/export/csv" in url and getattr(req, "data", None) == b"{}":
+                import urllib.error
+                err = urllib.error.HTTPError(url, 400, "Bad Request", {}, io.BytesIO(b"Bad"))
+                err.close()
+                raise err
+            elif "/api/export/" in url:
+                resp.status = 200
+                fmt = url.split("/")[-1]
+                ct = {
+                    "csv": "text/csv; charset=utf-8",
+                    "html": "text/html; charset=utf-8",
+                    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                }[fmt]
+                resp.headers = {"Content-Type": ct}
+                resp.read.return_value = b"sample-file-bytes"
+            else:
+                resp.status = 200
+                resp.read.return_value = b"ok"
+            return FakeContext(resp)
+
+        mock_open.side_effect = fake_open
+        smokecheck._check_attributes("http://localhost:8080", timeout=5)
+        smokecheck._check_exports("http://localhost:8080", timeout=5)
