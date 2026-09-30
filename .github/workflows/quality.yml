@@ -7,6 +7,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   IMAGE_NAME: ghcr.io/szczepangrela/inventory-generator
 
@@ -53,7 +57,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: Dockerfile
+          file: infra/Dockerfile
           platforms: linux/amd64
           build-args: RELEASE_REVISION=${{ github.sha }}
           tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
@@ -63,10 +67,59 @@ jobs:
           sbom: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Select the exact tested image
+        id: tested-image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ]]; then
+            echo "ref=${IMAGE_NAME}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Smoke-test the exact image
+        env:
+          IMAGE_REF: ${{ steps.tested-image.outputs.ref }}
+        run: |
+          container_name="inventory-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm --force "$container_name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker run --detach \
+            --name "$container_name" \
+            --cap-drop ALL \
+            --init \
+            --cpus 1 \
+            --memory 512m \
+            --memory-reservation 128m \
+            --memory-swap 512m \
+            "$IMAGE_REF" >/dev/null
+
+          health=starting
+          for _ in {1..60}; do
+            health="$(docker inspect --format '{{.State.Health.Status}}' "$container_name")"
+            if [[ "$health" == healthy ]]; then
+              break
+            fi
+            if [[ "$health" == unhealthy ]]; then
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$health" != healthy ]]; then
+            docker logs "$container_name"
+            echo "Container health status is $health." >&2
+            exit 1
+          fi
+
+          docker exec "$container_name" \
+            curl --fail --silent --show-error "http://127.0.0.1:8080/api/health"
       - name: Scan fixable high and critical vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && format('{0}@{1}', env.IMAGE_NAME, steps.build.outputs.digest) || format('{0}:{1}', env.IMAGE_NAME, github.sha) }}
+          image-ref: ${{ steps.tested-image.outputs.ref }}
           format: table
           exit-code: "1"
           ignore-unfixed: true
