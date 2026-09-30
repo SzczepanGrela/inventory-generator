@@ -1,15 +1,22 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using InventoryGenerator.Api.Models;
+using InventoryGenerator.Api.Services;
 
 namespace InventoryGenerator.Api.Generators
 {
     public class DocxGenerator : IDocumentGenerator
     {
+        private static readonly Regex InvalidXmlCharRegex = new(
+            @"[^\u0009\u000A\u000D\u0020-\uD7FF\uE000-\uFFFD]",
+            RegexOptions.Compiled);
+
         public byte[] GenerateDocument(List<Dictionary<string, object?>> data, List<ProductAttribute> attributes)
         {
             var columnHeaders = attributes.Select(a => a.Name).ToList();
@@ -36,7 +43,7 @@ namespace InventoryGenerator.Api.Generators
                         new SpacingBetweenLines() { After = "240" }
                     );
                     titleParagraph.Append(titleParaProps);
-                    Run titleRun = new Run(new Text("Inventory Report"));
+                    Run titleRun = new Run(CreateText("Inventory Report"));
                     RunProperties titleRunProps = new RunProperties(
                         new RunFonts() { Ascii = "Calibri", HighAnsi = "Calibri" },
                         new FontSize() { Val = "32" },
@@ -57,7 +64,7 @@ namespace InventoryGenerator.Api.Generators
                     }
                     else
                     {
-                        scaledWidths = columnHeaders.Select(_ => maxTableWidth / columnHeaders.Count).ToList();
+                        scaledWidths = columnHeaders.Select(_ => maxTableWidth / Math.Max(1, columnHeaders.Count)).ToList();
                     }
 
                     Table table = new Table();
@@ -113,7 +120,7 @@ namespace InventoryGenerator.Api.Generators
                         ParagraphProperties paraProps = new ParagraphProperties(new Justification() { Val = JustificationValues.Left });
                         paragraph.Append(paraProps);
 
-                        Run run = new Run(new Text(columnHeaders[i]));
+                        Run run = new Run(CreateText(columnHeaders[i]));
                         RunProperties runProps = new RunProperties(
                             new RunFonts() { Ascii = "Calibri", HighAnsi = "Calibri" },
                             new FontSize() { Val = "20" },
@@ -138,8 +145,8 @@ namespace InventoryGenerator.Api.Generators
                         {
                             var attr = attributes[i];
                             string header = attr.Name;
-                            object? value = rowData.ContainsKey(header) ? rowData[header] : "";
-                            string textValue = value?.ToString() ?? string.Empty;
+                            object? value = rowData.TryGetValue(header, out var v) ? v : null;
+                            string textValue = ValueHelper.ExtractScalarString(value);
 
                             TableCell cell = new TableCell();
                             TableCellProperties cellProps = new TableCellProperties(
@@ -148,13 +155,13 @@ namespace InventoryGenerator.Api.Generators
                             cell.Append(cellProps);
 
                             Paragraph paragraph = new Paragraph();
-                            bool alignRight = IsNumeric(value);
+                            bool alignRight = ValueHelper.IsNumeric(value);
                             ParagraphProperties paraProps = new ParagraphProperties(
                                 new Justification() { Val = alignRight ? JustificationValues.Right : JustificationValues.Left }
                             );
                             paragraph.Append(paraProps);
 
-                            Run run = new Run(new Text(textValue));
+                            Run run = new Run(CreateText(textValue));
                             RunProperties runProps = new RunProperties(
                                 new RunFonts() { Ascii = "Calibri", HighAnsi = "Calibri" },
                                 new FontSize() { Val = "20" }
@@ -189,13 +196,24 @@ namespace InventoryGenerator.Api.Generators
             }
         }
 
-        private bool IsNumeric(object? value)
+        public static string SanitizeXmlString(string? value)
         {
-            if (value == null) return false;
-            if (value is int || value is double || value is float || value is decimal || value is long || value is short) return true;
-            string str = value.ToString() ?? "";
-            if (string.IsNullOrWhiteSpace(str)) return false;
-            return double.TryParse(str, out _) || int.TryParse(str, out _);
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+            return InvalidXmlCharRegex.Replace(value, string.Empty);
+        }
+
+        private static Text CreateText(string text)
+        {
+            string clean = SanitizeXmlString(text);
+            var textElement = new Text(clean);
+            if (clean.StartsWith(' ') || clean.EndsWith(' '))
+            {
+                textElement.Space = SpaceProcessingModeValues.Preserve;
+            }
+            return textElement;
         }
     }
 }

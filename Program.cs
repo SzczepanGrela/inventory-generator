@@ -1,15 +1,20 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using InventoryGenerator.Api.Models;
 using InventoryGenerator.Api.Generators;
+using InventoryGenerator.Api.Services;
 
 static string GetRateLimitPartitionKey(HttpContext context)
 {
@@ -60,12 +65,26 @@ if (trustedProxyIps.Count > 0)
     });
 }
 
-// Bind to PORT environment variable if provided by cloud host (Render, Fly.io, Railway, etc.)
+// Bind to PORT environment variable if provided by cloud host
 var port = Environment.GetEnvironmentVariable("PORT");
 if (!string.IsNullOrEmpty(port))
 {
     builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 }
+
+// Kestrel request body limit: 2 MB maximum
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 2 * 1024 * 1024;
+});
+
+// Configure JSON options: prevent polymorphism RCE gadgets and deep nesting DoS
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.MaxDepth = 8;
+    options.SerializerOptions.TypeInfoResolver = new DefaultJsonTypeInfoResolver();
+    options.SerializerOptions.PropertyNameCaseInsensitive = true;
+});
 
 // Enable CORS
 builder.Services.AddCors(options =>
@@ -78,18 +97,21 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Configure Rate Limiting to protect export endpoints against DoS
+// Export rate limiter (shared client budget + docx burst + concurrency cap)
+builder.Services.AddSingleton<ExportRateLimiter>();
+
+// Configure ASP.NET Core Rate Limiting for read endpoints (~120 requests/min per IP)
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    options.AddPolicy("exportPolicy", context =>
+    options.AddPolicy("readPolicy", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: GetRateLimitPartitionKey(context),
             factory: _ => new FixedWindowRateLimiterOptions
             {
                 AutoReplenishment = true,
                 Window = TimeSpan.FromMinutes(1),
-                PermitLimit = 30,
+                PermitLimit = 120,
                 QueueLimit = 0
             }));
 });
@@ -103,19 +125,42 @@ if (trustedProxyIps.Count > 0)
 
 app.UseCors();
 app.UseRateLimiter();
+
+// Early rejection of request bodies exceeding 2MB before deserialization
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/api/export", StringComparison.OrdinalIgnoreCase) &&
+        HttpMethods.IsPost(context.Request.Method))
+    {
+        if (context.Request.ContentLength.HasValue && context.Request.ContentLength.Value > 2 * 1024 * 1024)
+        {
+            context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+            await context.Response.WriteAsJsonAsync(new
+            {
+                status = StatusCodes.Status413PayloadTooLarge,
+                title = "Payload Too Large",
+                detail = "Request body exceeds 2MB limit."
+            });
+            return;
+        }
+    }
+    await next();
+});
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
+// Health Endpoint
 app.MapGet("/api/health", () => Results.Ok(new
 {
     status = "ok",
     revision = releaseRevision
-}));
+})).RequireRateLimiting("readPolicy");
 
-// 1. Get Default Attributes Endpoint (Stateless template for new users)
+// 1. Get Default Attributes Endpoint
 app.MapGet("/api/attributes/default/{lang?}", (string? lang) => 
 {
-    bool isEn = (lang ?? "en").ToLower() == "en";
+    bool isEn = string.Equals(lang ?? "en", "en", StringComparison.OrdinalIgnoreCase);
     
     var defaultAttributes = isEn ? new List<ProductAttribute>
     {
@@ -133,62 +178,88 @@ app.MapGet("/api/attributes/default/{lang?}", (string? lang) =>
         new ProductAttribute { Name = "Magazyn", Type = AttributeType.Int, CanBeEmpty = false, ColumnWidth = 800, IsBold = false, IsItalic = false, IsUnderline = false }
     };
     return Results.Ok(defaultAttributes);
-});
+}).RequireRateLimiting("readPolicy");
 
-// 2. Stateless Export Endpoint (Receives Local-First payload from client and returns generated file)
-app.MapPost("/api/export/{format}", (ExportPayload payload, string format) => 
+// 2. Stateless Export Endpoint
+app.MapPost("/api/export/{format}", async (
+    HttpContext context,
+    string format,
+    ExportPayload payload,
+    ExportRateLimiter rateLimiter,
+    ILogger<Program> logger) => 
 {
-    if (payload == null || payload.Attributes == null || payload.Products == null)
+    var normalizedFormat = format?.ToLowerInvariant();
+    if (normalizedFormat is not ("docx" or "csv" or "html"))
     {
-        return Results.BadRequest("Payload must contain attributes and products.");
+        return Results.BadRequest(new { error = "Unsupported export format. Use docx, csv, or html." });
     }
 
-    var attributes = payload.Attributes;
-    var data = payload.Products.Select(p => p.Attributes).ToList();
-
-    IDocumentGenerator generator;
-    string contentType;
-    string fileExtension;
-
-    switch (format.ToLower())
+    // Rate limiting: shared client budget + format cost
+    var clientIp = GetRateLimitPartitionKey(context);
+    var rateLimitResult = rateLimiter.CheckAndConsume(clientIp, normalizedFormat);
+    if (!rateLimitResult.Allowed)
     {
-        case "docx":
-            generator = new DocxGenerator();
-            contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-            fileExtension = "docx";
-            break;
-        case "csv":
-            generator = new CsvGenerator();
-            contentType = "text/csv";
-            fileExtension = "csv";
-            break;
-        case "html":
-            generator = new HtmlGenerator();
-            contentType = "text/html";
-            fileExtension = "html";
-            break;
-        default:
-            return Results.BadRequest("Unsupported export format. Use docx, csv, or html.");
+        context.Response.Headers.RetryAfter = rateLimitResult.RetryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+        return Results.Problem(
+            statusCode: StatusCodes.Status429TooManyRequests,
+            detail: rateLimitResult.Reason ?? "Export rate limit exceeded. Please try again later.");
+    }
+
+    // Payload validation: caps, scalar-only, anti-injection, anti-prototype pollution
+    var validationError = PayloadValidator.Validate(payload);
+    if (validationError != null)
+    {
+        return Results.BadRequest(new { error = validationError });
+    }
+
+    // Concurrency limiting: server overload protection
+    bool slotAcquired = await rateLimiter.TryAcquireConcurrencySlotAsync(TimeSpan.Zero);
+    if (!slotAcquired)
+    {
+        context.Response.Headers.RetryAfter = "1";
+        return Results.Problem(
+            statusCode: StatusCodes.Status429TooManyRequests,
+            detail: "Server is busy processing other export requests. Please try again shortly.");
     }
 
     try
     {
+        var attributes = payload.Attributes;
+        var data = payload.Products.Select(p => p.Attributes).ToList();
+
+        IDocumentGenerator generator = normalizedFormat switch
+        {
+            "docx" => new DocxGenerator(),
+            "csv" => new CsvGenerator(),
+            "html" => new HtmlGenerator(),
+            _ => throw new InvalidOperationException()
+        };
+
+        string contentType = normalizedFormat switch
+        {
+            "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "csv" => "text/csv",
+            "html" => "text/html",
+            _ => throw new InvalidOperationException()
+        };
+
         var fileBytes = generator.GenerateDocument(data, attributes);
-        var fileName = $"inventory_{DateTime.Now:yyyyMMdd_HHmmss}.{fileExtension}";
+        var fileName = $"inventory_{DateTime.UtcNow:yyyyMMdd_HHmmss}.{normalizedFormat}";
         return Results.File(fileBytes, contentType, fileName);
     }
     catch (Exception ex)
     {
-        return Results.Problem($"Failed to generate document: {ex.Message}");
+        logger.LogError(ex, "Failed to generate {Format} document for client {ClientIp}", normalizedFormat, clientIp);
+        return Results.Problem(
+            statusCode: StatusCodes.Status500InternalServerError,
+            detail: "Failed to generate document.");
     }
-}).RequireRateLimiting("exportPolicy");
+    finally
+    {
+        rateLimiter.ReleaseConcurrencySlot();
+    }
+});
 
 app.Run();
-
-public class ExportPayload
-{
-    public List<ProductAttribute> Attributes { get; set; } = new();
-    public List<DynamicProduct> Products { get; set; } = new();
-}
 
 public partial class Program { }

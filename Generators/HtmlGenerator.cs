@@ -1,8 +1,10 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Text;
 using InventoryGenerator.Api.Models;
+using InventoryGenerator.Api.Services;
 
 namespace InventoryGenerator.Api.Generators
 {
@@ -42,16 +44,16 @@ namespace InventoryGenerator.Api.Generators
             sb.AppendLine("    <div class=\"table-responsive\">");
             sb.AppendLine("      <table>");
             sb.AppendLine("        <colgroup>");
-            
+
             int totalInputWidth = columnWidths.Sum();
             foreach (int width in columnWidths)
             {
-                double pct = totalInputWidth > 0 ? (double)width / totalInputWidth * 100 : 100.0 / columnWidths.Count;
+                double pct = totalInputWidth > 0 ? (double)width / totalInputWidth * 100 : 100.0 / Math.Max(1, columnWidths.Count);
                 sb.AppendLine($"          <col style=\"width: {pct:F2}%;\">");
             }
-            
+
             sb.AppendLine("        </colgroup>");
-            
+
             sb.AppendLine("        <thead>");
             sb.AppendLine("          <tr>");
             foreach (var header in columnHeaders)
@@ -60,7 +62,7 @@ namespace InventoryGenerator.Api.Generators
             }
             sb.AppendLine("          </tr>");
             sb.AppendLine("        </thead>");
-            
+
             sb.AppendLine("        <tbody>");
             foreach (var row in data)
             {
@@ -69,18 +71,18 @@ namespace InventoryGenerator.Api.Generators
                 {
                     var attr = attributes[i];
                     string header = attr.Name;
-                    object? val = row.ContainsKey(header) ? row[header] : "";
-                    string str = val?.ToString() ?? string.Empty;
-                    
-                    bool alignRight = IsNumeric(val);
+                    object? val = row.TryGetValue(header, out var v) ? v : null;
+                    string str = ValueHelper.ExtractScalarString(val);
+
+                    bool alignRight = ValueHelper.IsNumeric(val);
                     var classes = new List<string>();
                     if (alignRight) classes.Add("text-right");
                     if (attr.IsBold) classes.Add("bold");
                     if (attr.IsItalic) classes.Add("italic");
                     if (attr.IsUnderline) classes.Add("underline");
-                    
+
                     string classAttr = classes.Count > 0 ? $"class=\"{string.Join(" ", classes)}\"" : "";
-                    
+
                     sb.AppendLine($"            <td {classAttr}>{WebUtility.HtmlEncode(str)}</td>");
                 }
                 sb.AppendLine("          </tr>");
@@ -91,17 +93,8 @@ namespace InventoryGenerator.Api.Generators
             sb.AppendLine("  </div>");
             sb.AppendLine("</body>");
             sb.AppendLine("</html>");
-            
-            return Encoding.UTF8.GetBytes(sb.ToString());
-        }
 
-        private bool IsNumeric(object? value)
-        {
-            if (value == null) return false;
-            if (value is int || value is double || value is float || value is decimal || value is long || value is short) return true;
-            string str = value.ToString() ?? "";
-            if (string.IsNullOrWhiteSpace(str)) return false;
-            return double.TryParse(str, out _) || int.TryParse(str, out _);
+            return Encoding.UTF8.GetBytes(sb.ToString());
         }
     }
 }
