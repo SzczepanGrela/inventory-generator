@@ -30,26 +30,26 @@
         <!-- File Actions Toolbar -->
         <div class="toolbar-actions">
           <div class="dropdown">
-            <button class="btn btn-outline dropdown-toggle" id="export-dropdown-btn">
+            <button class="btn btn-outline dropdown-toggle" id="export-dropdown-btn" aria-haspopup="true" aria-expanded="false" aria-label="Eksportuj raport">
               <i class="fa-solid fa-file-export"></i> <span class="hide-mobile" data-i18n="panel_export_title">Eksportuj</span> <i class="fa-solid fa-chevron-down ms-1"></i>
             </button>
-            <div class="dropdown-menu hide" id="export-dropdown-menu">
-              <button id="export-docx-btn" class="dropdown-item"><i class="fa-solid fa-file-word text-blue"></i> Word (.docx)</button>
-              <button id="export-csv-btn" class="dropdown-item"><i class="fa-solid fa-file-csv text-green"></i> Excel (.csv)</button>
-              <button id="export-html-btn" class="dropdown-item"><i class="fa-solid fa-file-code text-orange"></i> Webpage (.html)</button>
+            <div class="dropdown-menu hide" id="export-dropdown-menu" role="menu">
+              <button id="export-docx-btn" class="dropdown-item" role="menuitem"><i class="fa-solid fa-file-word text-blue"></i> Word (.docx)</button>
+              <button id="export-csv-btn" class="dropdown-item" role="menuitem"><i class="fa-solid fa-file-csv text-green"></i> Excel (.csv)</button>
+              <button id="export-html-btn" class="dropdown-item" role="menuitem"><i class="fa-solid fa-file-code text-orange"></i> Webpage (.html)</button>
             </div>
           </div>
           
-          <button id="export-json-btn" class="btn btn-primary" title="Zapisz Projekt">
+          <button id="export-json-btn" class="btn btn-primary" title="Zapisz Projekt" aria-label="Zapisz projekt do pliku JSON">
             <i class="fa-solid fa-floppy-disk"></i> <span class="hide-mobile" data-i18n="btn_save_project">Zapisz</span>
           </button>
           
-          <button id="import-json-trigger-btn" class="btn btn-secondary" title="Wgraj Projekt">
+          <button id="import-json-trigger-btn" class="btn btn-secondary" title="Wgraj Projekt" aria-label="Wgraj projekt z pliku JSON">
             <i class="fa-solid fa-upload"></i> <span class="hide-mobile" data-i18n="btn_load_project">Wgraj</span>
           </button>
-          <input type="file" id="import-json-file" accept=".json" class="hide">
+          <input type="file" id="import-json-file" accept=".json" class="hide" aria-label="Wybierz plik projektu JSON">
 
-          <button id="settings-modal-trigger-btn" class="btn btn-outline" title="Ustawienia Kolumn">
+          <button id="settings-modal-trigger-btn" class="btn btn-outline" title="Ustawienia Kolumn" aria-label="Ustawienia kolumn i atrybutów">
             <i class="fa-solid fa-sliders"></i>
           </button>
         </div>
@@ -59,13 +59,13 @@
         <!-- Extra options -->
         <div class="header-options">
           <!-- i18n switcher -->
-          <div class="lang-selector">
-            <button id="lang-pl-btn" class="btn-lang active">PL</button>
-            <button id="lang-en-btn" class="btn-lang">EN</button>
+          <div class="lang-selector" role="group" aria-label="Wybór języka">
+            <button id="lang-pl-btn" class="btn-lang active" aria-label="Język polski">PL</button>
+            <button id="lang-en-btn" class="btn-lang" aria-label="English language">EN</button>
           </div>
           
           <!-- Theme Toggle -->
-          <button id="theme-toggle-btn" class="btn-theme" title="Toggle Light/Dark Theme">
+          <button id="theme-toggle-btn" class="btn-theme" title="Toggle Light/Dark Theme" aria-label="Przełącz motyw jasny lub ciemny">
             <i class="fa-solid fa-moon moon-icon"></i>
             <i class="fa-solid fa-sun sun-icon"></i>
           </button>
@@ -78,8 +78,8 @@
       <main class="content-area">
         <!-- Inventory List Panel -->
         <div class="panel flex-grow">
-          <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
-            <div style="display: flex; align-items: center; gap: 1rem;">
+          <div class="panel-header">
+            <div class="panel-header-title">
               <h2><i class="fa-solid fa-list-check header-icon-blue"></i> <span data-i18n="panel_records_title">Rekordy spisu</span></h2>
               <div class="badge" id="product-count-badge">0 items</div>
             </div>
@@ -115,14 +115,14 @@
   </div>
 
   <!-- Product Add/Edit Modal -->
-  <div id="product-modal" class="modal-backdrop hide">
+  <div id="product-modal" class="modal-backdrop hide" role="dialog" aria-modal="true" aria-labelledby="form-title">
     <div class="modal modal-md">
       <div class="modal-header">
         <h2>
           <i class="fa-solid fa-circle-plus header-icon-blue" id="product-modal-icon"></i>
           <span id="form-title" data-i18n="panel_add_title">Dodaj nowy produkt</span>
         </h2>
-        <button id="close-product-modal-btn" class="btn-close">&times;</button>
+        <button id="close-product-modal-btn" class="btn-close" aria-label="Zamknij formularz produktu">&times;</button>
       </div>
       <div class="modal-body modal-body-noscroll-x">
         <form id="product-form">
@@ -141,11 +141,11 @@
   </div>
 
   <!-- Document Preview Modal -->
-  <div id="preview-modal" class="modal-backdrop hide">
+  <div id="preview-modal" class="modal-backdrop hide" role="dialog" aria-modal="true" aria-labelledby="preview-title">
     <div class="modal">
       <div class="modal-header">
-        <h2><i class="fa-solid fa-eye header-icon-green"></i> <span data-i18n="preview_title">Podgląd dokumentu</span></h2>
-        <button id="close-modal-btn" class="btn-close">&times;</button>
+        <h2 id="preview-title"><i class="fa-solid fa-eye header-icon-green"></i> <span data-i18n="preview_title">Podgląd dokumentu</span></h2>
+        <button id="close-modal-btn" class="btn-close" aria-label="Zamknij podgląd dokumentu">&times;</button>
       </div>
       <div class="modal-body">
         <div id="document-preview-container"></div>
@@ -162,11 +162,11 @@
   </div>
 
   <!-- Settings Modal -->
-  <div id="settings-modal" class="modal-backdrop hide">
+  <div id="settings-modal" class="modal-backdrop hide" role="dialog" aria-modal="true" aria-labelledby="settings-title">
     <div class="modal modal-lg">
       <div class="modal-header">
-        <h2><i class="fa-solid fa-sliders header-icon-gray"></i> <span data-i18n="panel_settings_title">Ustawienia kolumn i atrybutów</span></h2>
-        <button id="close-settings-modal-btn" class="btn-close">&times;</button>
+        <h2 id="settings-title"><i class="fa-solid fa-sliders header-icon-gray"></i> <span data-i18n="panel_settings_title">Ustawienia kolumn i atrybutów</span></h2>
+        <button id="close-settings-modal-btn" class="btn-close" aria-label="Zamknij ustawienia">&times;</button>
       </div>
       <div class="modal-body">
         <div class="attributes-manager">
@@ -206,7 +206,7 @@
                   <option value="Enum" data-i18n="type_enum">Dropdown Selection</option>
                 </select>
               </div>
-              <div class="form-group" id="enum-values-group" style="display: none;">
+              <div class="form-group hide" id="enum-values-group">
                 <label for="new-attr-enum" data-i18n="enum_values_label">Enum Values (comma-separated)</label>
                 <input type="text" id="new-attr-enum" placeholder="e.g. A, B, C" data-i18n="placeholder_col_enum">
               </div>
@@ -252,7 +252,7 @@
 
         <div class="danger-zone">
           <h3 data-i18n="danger_zone_title">Strefa Niebezpieczna</h3>
-          <p class="subtitle" data-i18n="danger_zone_desc" style="margin-bottom: 15px;">Te operacje są nieodwracalne i trwale usuną dane z Twojej przeglądarki.</p>
+          <p class="subtitle mb-15" data-i18n="danger_zone_desc">Te operacje są nieodwracalne i trwale usuną dane z Twojej przeglądarki.</p>
           <button id="clear-all-btn" class="btn btn-danger">
             <i class="fa-solid fa-trash-can"></i> <span data-i18n="btn_clear_all">Wyczyść wszystkie dane</span>
           </button>
@@ -262,18 +262,18 @@
   </div>
 
   <!-- Confirm Modal -->
-  <div id="confirm-modal" class="modal-backdrop hide" style="z-index: 10000;">
-    <div class="modal modal-sm" style="max-width: 400px; text-align: center;">
-      <div class="modal-header" style="border-bottom: none; justify-content: center; padding-bottom: 0;">
-        <div class="warning-icon" style="font-size: 3rem; color: var(--danger-color); margin-bottom: 10px;">
+  <div id="confirm-modal" class="modal-backdrop hide confirm-modal-backdrop" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <div class="modal modal-sm confirm-modal">
+      <div class="modal-header confirm-modal-header">
+        <div class="warning-icon confirm-warning-icon">
           <i class="fa-solid fa-circle-exclamation"></i>
         </div>
       </div>
-      <div class="modal-body" style="padding-top: 0;">
-        <h2 id="confirm-title" style="margin-bottom: 10px; font-size: 1.3rem;">Potwierdź akcję</h2>
-        <p id="confirm-message" style="color: var(--text-secondary);">Czy na pewno chcesz kontynuować?</p>
+      <div class="modal-body confirm-modal-body">
+        <h2 id="confirm-title" class="confirm-title">Potwierdź akcję</h2>
+        <p id="confirm-message" class="confirm-message">Czy na pewno chcesz kontynuować?</p>
       </div>
-      <div class="modal-footer" style="justify-content: center; border-top: none;">
+      <div class="modal-footer confirm-modal-footer">
         <button id="confirm-cancel-btn" class="btn btn-outline" data-i18n="btn_cancel">Anuluj</button>
         <button id="confirm-ok-btn" class="btn btn-danger" data-i18n="btn_ok">OK</button>
       </div>

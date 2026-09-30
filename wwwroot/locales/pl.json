@@ -73,5 +73,11 @@
   "danger_zone_desc": "Te operacje są nieodwracalne i trwale usuną dane z Twojej przeglądarki.",
   "btn_cancel": "Anuluj",
   "btn_ok": "OK",
-  "modal_confirm_title": "Potwierdź akcję"
+  "modal_confirm_title": "Potwierdź akcję",
+  "toast_rate_limited": "Limit żądań eksportu przekroczony. Spróbuj ponownie za ",
+  "toast_payload_too_large": "Rozmiar danych przekracza dozwolony limit 2 MB.",
+  "toast_storage_full": "Pamięć podręczna przeglądarki jest pełna. Pobierz kopię JSON i usuń stare wpisy.",
+  "aria_close_modal": "Zamknij okno",
+  "aria_theme_toggle": "Przełącz motyw jasny/ciemny",
+  "aria_settings_toggle": "Ustawienia kolumn i atrybutów"
 }

@@ -1108,3 +1108,73 @@ select:focus {
     padding: 0.5rem 0.6rem;
   }
 }
+
+/* Modal and layout utility classes (replacing inline styles) */
+.panel-header-title {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.confirm-modal-backdrop {
+  z-index: 10000;
+}
+
+.confirm-modal {
+  max-width: 400px;
+  text-align: center;
+}
+
+.confirm-modal-header {
+  border-bottom: none;
+  justify-content: center;
+  padding-bottom: 0;
+}
+
+.confirm-warning-icon {
+  font-size: 3rem;
+  color: var(--danger);
+  margin-bottom: 10px;
+}
+
+.confirm-modal-body {
+  padding-top: 0;
+}
+
+.confirm-title {
+  margin-bottom: 10px;
+  font-size: 1.3rem;
+}
+
+.confirm-message {
+  color: var(--text-secondary);
+}
+
+.confirm-modal-footer {
+  justify-content: center;
+  border-top: none;
+}
+
+.mb-15 {
+  margin-bottom: 15px;
+}
+
+/* Focus and Accessibility enhancements */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

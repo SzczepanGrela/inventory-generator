@@ -112,31 +112,117 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadLocalData();
 });
 
+// Modal Accessibility & Focus Management
+let activeModal = null;
+let lastFocusedElement = null;
+
+function openModal(modalEl) {
+  if (!modalEl) return;
+  lastFocusedElement = document.activeElement;
+  activeModal = modalEl;
+  modalEl.classList.remove('hide');
+
+  // Move focus to first interactive element inside modal
+  requestAnimationFrame(() => {
+    const focusable = modalEl.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length > 0) {
+      focusable[0].focus();
+    }
+  });
+}
+
+function closeModal(modalEl) {
+  if (!modalEl) return;
+  modalEl.classList.add('hide');
+  if (activeModal === modalEl) {
+    activeModal = null;
+  }
+  if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+    lastFocusedElement.focus();
+    lastFocusedElement = null;
+  }
+}
+
+function closeProductModal() {
+  closeModal(elements.productModal);
+  exitEditMode();
+}
+
 // Setup Event Listeners
 function setupEventListeners() {
+  // Global modal keyboard handling: Escape to close, Tab to trap focus
+  document.addEventListener('keydown', (e) => {
+    if (!activeModal) return;
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (activeModal === elements.productModal) {
+        closeProductModal();
+      } else if (activeModal === elements.previewModal) {
+        closePreviewModal();
+      } else if (activeModal === elements.settingsModal) {
+        closeModal(elements.settingsModal);
+      } else if (activeModal.id === 'confirm-modal') {
+        const cancelBtn = document.getElementById('confirm-cancel-btn');
+        if (cancelBtn) cancelBtn.click();
+      } else {
+        closeModal(activeModal);
+      }
+      return;
+    }
+
+    if (e.key === 'Tab') {
+      const focusable = Array.from(activeModal.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )).filter(el => el.offsetParent !== null);
+
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    }
+  });
+
   // Toolbar dropdowns and modals
   elements.exportDropdownBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     elements.exportDropdownMenu.classList.toggle('hide');
+    const isExpanded = !elements.exportDropdownMenu.classList.contains('hide');
+    elements.exportDropdownBtn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
   });
   
   document.addEventListener('click', () => {
     elements.exportDropdownMenu.classList.add('hide');
+    elements.exportDropdownBtn.setAttribute('aria-expanded', 'false');
   });
 
   elements.settingsModalTriggerBtn.addEventListener('click', () => {
-    elements.settingsModal.classList.remove('hide');
+    openModal(elements.settingsModal);
   });
 
   elements.closeSettingsModalBtn.addEventListener('click', () => {
-    elements.settingsModal.classList.add('hide');
+    closeModal(elements.settingsModal);
   });
 
   elements.newAttrType.addEventListener('change', (e) => {
     if (e.target.value === 'Enum') {
-      elements.newAttrEnumGroup.style.display = 'flex';
+      elements.newAttrEnumGroup.classList.remove('hide');
     } else {
-      elements.newAttrEnumGroup.style.display = 'none';
+      elements.newAttrEnumGroup.classList.add('hide');
     }
   });
 
@@ -147,18 +233,13 @@ function setupEventListeners() {
 
   elements.productForm.addEventListener('submit', (e) => {
     handleFormSubmit(e);
-    elements.productModal.classList.add('hide');
+    closeProductModal();
   });
 
   elements.openProductModalBtn.addEventListener('click', () => {
     exitEditMode();
-    elements.productModal.classList.remove('hide');
+    openModal(elements.productModal);
   });
-
-  const closeProductModal = () => {
-    elements.productModal.classList.add('hide');
-    exitEditMode();
-  };
 
   elements.closeProductModalBtn.addEventListener('click', closeProductModal);
   elements.cancelProductBtn.addEventListener('click', closeProductModal);
@@ -190,17 +271,16 @@ function showConfirmModal(titleText, messageText, onConfirmCallback) {
   const cancelBtn = document.getElementById('confirm-cancel-btn');
   const okBtn = document.getElementById('confirm-ok-btn');
   
-  // Jeśli podany ciąg znaków jest kluczem translacyjnym, pobierz go; w przeciwnym razie użyj oryginalnego
   const translatedTitle = getTranslation(titleText) || titleText;
   
   titleEl.textContent = translatedTitle;
   messageEl.textContent = messageText;
   
-  confirmModal.classList.remove('hide');
+  openModal(confirmModal);
   
   // Cleanup
   const cleanup = () => {
-    confirmModal.classList.add('hide');
+    closeModal(confirmModal);
     cancelBtn.removeEventListener('click', onCancel);
     okBtn.removeEventListener('click', onOk);
   };
@@ -252,12 +332,29 @@ async function loadLocalData() {
   }
 }
 
+function handleStorageError(err) {
+  console.error('LocalStorage save error:', err);
+  if (err && (err.name === 'QuotaExceededError' || err.code === 22)) {
+    showToast(getTranslation('toast_storage_full'), 'error');
+  } else {
+    showToast(`Storage error: ${err.message || 'Błąd zapisu'}`, 'error');
+  }
+}
+
 function saveAttributesToLocalStorage() {
-  localStorage.setItem('inventory_attributes', JSON.stringify(appState.attributes));
+  try {
+    localStorage.setItem('inventory_attributes', JSON.stringify(appState.attributes));
+  } catch (err) {
+    handleStorageError(err);
+  }
 }
 
 function saveProductsToLocalStorage() {
-  localStorage.setItem('inventory_products', JSON.stringify(appState.products));
+  try {
+    localStorage.setItem('inventory_products', JSON.stringify(appState.products));
+  } catch (err) {
+    handleStorageError(err);
+  }
 }
 
 // ----------------------------------------------------
@@ -444,19 +541,18 @@ function renderInventoryTable() {
   elements.productCountBadge.innerText = getLocalizedProductBadge(count);
 
   if (count === 0) {
-    elements.emptyState.style.display = 'flex';
-    elements.inventoryMainTable.style.display = 'none';
+    elements.emptyState.classList.remove('hide');
+    elements.inventoryMainTable.classList.add('hide');
     return;
   }
 
-  elements.emptyState.style.display = 'none';
-  elements.inventoryMainTable.style.display = 'table';
+  elements.emptyState.classList.add('hide');
+  elements.inventoryMainTable.classList.remove('hide');
 
   const headerTr = document.createElement('tr');
   
   const idTh = document.createElement('th');
   idTh.innerText = 'ID';
-  idTh.style.width = '60px';
   headerTr.appendChild(idTh);
 
   appState.attributes.forEach(attr => {
@@ -470,7 +566,6 @@ function renderInventoryTable() {
 
   const actionsTh = document.createElement('th');
   actionsTh.innerText = getTranslation('col_action');
-  actionsTh.style.width = '100px';
   headerTr.appendChild(actionsTh);
   elements.inventoryThead.appendChild(headerTr);
 
@@ -514,11 +609,13 @@ function renderInventoryTable() {
     
     const editBtn = document.createElement('button');
     editBtn.className = 'btn-row-action btn-edit-row';
+    editBtn.setAttribute('aria-label', `${getTranslation('panel_edit_title')} #${prod.id}`);
     editBtn.innerHTML = '<i class="fa-solid fa-pencil"></i>';
     editBtn.addEventListener('click', () => enterEditMode(prod));
     
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'btn-row-action btn-delete-row';
+    deleteBtn.setAttribute('aria-label', `${getTranslation('confirm_delete_prod')}${prod.id}`);
     deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i>';
     deleteBtn.addEventListener('click', () => deleteProduct(prod.id));
 
@@ -536,7 +633,7 @@ function renderAttributesSettings() {
   appState.attributes.forEach((attr, idx) => {
     const tr = document.createElement('tr');
     if (appState.editingAttributeIndex === idx) {
-      tr.style.background = 'rgba(var(--primary-rgb), 0.08)';
+      tr.classList.add('row-editing');
     }
     
     const nameTd = document.createElement('td');
@@ -560,7 +657,7 @@ function renderAttributesSettings() {
     if (attr.isBold) styles.push('<strong>B</strong>');
     if (attr.isItalic) styles.push('<em>I</em>');
     if (attr.isUnderline) styles.push('<u>U</u>');
-    boldTd.innerHTML = styles.length > 0 ? styles.join(' ') : '<span style="color: var(--text-muted);">-</span>';
+    boldTd.innerHTML = styles.length > 0 ? styles.join(' ') : '<span class="text-muted">-</span>';
     tr.appendChild(boldTd);
 
     const actionTd = document.createElement('td');
@@ -568,11 +665,13 @@ function renderAttributesSettings() {
 
     const editBtn = document.createElement('button');
     editBtn.className = 'btn-row-action btn-edit-row';
+    editBtn.setAttribute('aria-label', `${getTranslation('btn_save_changes')} (${attr.name})`);
     editBtn.innerHTML = '<i class="fa-solid fa-pencil"></i>';
     editBtn.addEventListener('click', () => editAttributeLocally(idx));
 
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'btn-row-action btn-delete-row';
+    deleteBtn.setAttribute('aria-label', `${getTranslation('toast_col_removed')} (${attr.name})`);
     deleteBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
     deleteBtn.addEventListener('click', () => removeAttributeLocally(idx));
     
@@ -651,10 +750,10 @@ function editAttributeLocally(index) {
   elements.newAttrWidth.value = attr.columnWidth;
 
   if (attr.type === 'Enum') {
-    elements.newAttrEnumGroup.style.display = 'flex';
+    elements.newAttrEnumGroup.classList.remove('hide');
     elements.newAttrEnum.value = (attr.enumValues || []).join(', ');
   } else {
-    elements.newAttrEnumGroup.style.display = 'none';
+    elements.newAttrEnumGroup.classList.add('hide');
     elements.newAttrEnum.value = '';
   }
 
@@ -662,7 +761,7 @@ function editAttributeLocally(index) {
   elements.addAttributeBtn.innerHTML = `<i class="fa-solid fa-check"></i> ${getTranslation('btn_save_changes')}`;
 
   // Expand the settings panel if collapsed
-  elements.attributesPanel.classList.remove('collapsed');
+  if (elements.attributesPanel) elements.attributesPanel.classList.remove('collapsed');
 
   renderAttributesSettings();
 }
@@ -681,7 +780,7 @@ function clearAttributeForm() {
   if (elements.newAttrUnderline) elements.newAttrUnderline.checked = false;
   elements.newAttrEmpty.checked = true;
   elements.newAttrWidth.value = '800';
-  elements.newAttrEnumGroup.style.display = 'none';
+  elements.newAttrEnumGroup.classList.add('hide');
   elements.newAttrType.value = 'String';
   elements.addAttributeBtn.innerHTML = `<i class="fa-solid fa-plus-square"></i> ${getTranslation('btn_add_column')}`;
 }
@@ -771,8 +870,6 @@ function enterEditMode(product) {
   elements.formTitle.innerText = `${getTranslation('panel_edit_title')} #${product.id}`;
   elements.submitProductText.innerText = getTranslation('btn_save_changes');
   elements.productModalIcon.className = 'fa-solid fa-pen-to-square header-icon-blue';
-  
-  elements.productModal.classList.remove('hide');
 
   appState.attributes.forEach(attr => {
     const input = document.getElementById(`field-${attr.name}`);
@@ -786,7 +883,7 @@ function enterEditMode(product) {
     }
   });
 
-  elements.productModal.classList.remove('hide');
+  openModal(elements.productModal);
 }
 
 function exitEditMode() {
@@ -815,7 +912,7 @@ function clearAllProducts() {
     markAsEdited();
     showToast(getTranslation('toast_all_cleared'), 'info');
     renderInventoryTable();
-    elements.settingsModal.classList.add('hide');
+    closeModal(elements.settingsModal);
   });
 }
 
@@ -839,12 +936,52 @@ function openPreviewModal(format) {
     renderDocxPreview();
   }
 
-  elements.previewModal.classList.remove('hide');
+  openModal(elements.previewModal);
 }
 
 function closePreviewModal() {
-  elements.previewModal.classList.add('hide');
+  closeModal(elements.previewModal);
   appState.currentExportFormat = null;
+}
+
+let rateLimitTimer = null;
+
+function showRateLimitToast(detail, waitSeconds) {
+  if (rateLimitTimer) clearInterval(rateLimitTimer);
+
+  let remaining = waitSeconds;
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-error';
+  toast.id = 'rate-limit-toast';
+
+  const updateMessage = () => {
+    toast.innerHTML = `
+      <i class="fa-solid fa-hourglass-half toast-icon"></i>
+      <span class="toast-message">${detail} (${getTranslation('toast_rate_limited')}${remaining}s)</span>
+    `;
+  };
+
+  updateMessage();
+  elements.toastContainer.appendChild(toast);
+
+  if (elements.modalDownloadBtn) {
+    elements.modalDownloadBtn.disabled = true;
+  }
+
+  rateLimitTimer = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(rateLimitTimer);
+      rateLimitTimer = null;
+      if (elements.modalDownloadBtn) {
+        elements.modalDownloadBtn.disabled = false;
+      }
+      toast.style.animation = 'toastIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) reverse forwards';
+      setTimeout(() => toast.remove(), 200);
+    } else {
+      updateMessage();
+    }
+  }, 1000);
 }
 
 async function executeDownload() {
@@ -865,7 +1002,24 @@ async function executeDownload() {
       body: JSON.stringify(payload)
     });
 
-    if (!response.ok) throw new Error('Export request failed');
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('Retry-After');
+      const waitSeconds = parseInt(retryAfter, 10) || 1;
+      const problem = await response.json().catch(() => null);
+      const detail = problem?.detail || 'Zbyt wiele żądań eksportu.';
+      showRateLimitToast(detail, waitSeconds);
+      return;
+    }
+
+    if (response.status === 413) {
+      showToast(getTranslation('toast_payload_too_large'), 'error');
+      return;
+    }
+
+    if (!response.ok) {
+      const problem = await response.json().catch(() => null);
+      throw new Error(problem?.error || problem?.detail || 'Export request failed');
+    }
 
     const blob = await response.blob();
     const downloadUrl = URL.createObjectURL(blob);
@@ -1054,6 +1208,95 @@ function exportProjectAsJson() {
   URL.revokeObjectURL(url);
 }
 
+function sanitizeProjectData(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Projekt musi być poprawnym obiektem JSON.');
+  }
+
+  const forbiddenKeys = ['__proto__', 'constructor', 'prototype', '$type'];
+
+  if (!Array.isArray(raw.attributes) || raw.attributes.length === 0) {
+    throw new Error('Brak zdefiniowanych atrybutów w projekcie.');
+  }
+  if (raw.attributes.length > 50) {
+    throw new Error('Projekt przekracza maksymalny limit 50 kolumn.');
+  }
+
+  const cleanAttributes = [];
+  const seenNames = new Set();
+
+  for (const attr of raw.attributes) {
+    if (!attr || typeof attr !== 'object') continue;
+    const name = String(attr.name || '').trim();
+    if (!name || name.length > 100) {
+      throw new Error(`Nieprawidłowa nazwa kolumny: "${name}".`);
+    }
+    if (forbiddenKeys.includes(name.toLowerCase())) {
+      throw new Error(`Niedozwolona nazwa kolumny: "${name}".`);
+    }
+    if (seenNames.has(name.toLowerCase())) {
+      throw new Error(`Zdublowana kolumna: "${name}".`);
+    }
+    seenNames.add(name.toLowerCase());
+
+    const allowedTypes = ['String', 'Int', 'Double', 'DateTime', 'Bool', 'Enum'];
+    const type = allowedTypes.includes(attr.type) ? attr.type : 'String';
+
+    cleanAttributes.push({
+      name,
+      type,
+      canBeEmpty: Boolean(attr.canBeEmpty),
+      enumValues: Array.isArray(attr.enumValues)
+        ? attr.enumValues.map(v => String(v || '').trim()).filter(Boolean).slice(0, 100)
+        : [],
+      columnWidth: Math.min(4000, Math.max(200, Number(attr.columnWidth) || 800)),
+      isBold: Boolean(attr.isBold),
+      isItalic: Boolean(attr.isItalic),
+      isUnderline: Boolean(attr.isUnderline)
+    });
+  }
+
+  if (!Array.isArray(raw.products)) {
+    throw new Error('Lista produktów musi być tablicą.');
+  }
+  if (raw.products.length > 5000) {
+    throw new Error('Projekt przekracza limit 5000 wierszy.');
+  }
+  if (cleanAttributes.length * raw.products.length > 50000) {
+    throw new Error('Projekt przekracza łączny limit 50 000 komórek.');
+  }
+
+  const cleanProducts = [];
+  for (let i = 0; i < raw.products.length; i++) {
+    const p = raw.products[i];
+    if (!p || typeof p !== 'object') continue;
+
+    const cleanAttrMap = Object.create(null);
+    const rawAttrs = p.attributes || {};
+
+    for (const key of Object.keys(rawAttrs)) {
+      if (forbiddenKeys.includes(key.toLowerCase()) || key.length > 100) {
+        continue;
+      }
+      const val = rawAttrs[key];
+      if (val !== null && typeof val === 'object') {
+        throw new Error(`Wartość kolumny "${key}" w wierszu ${i + 1} musi być wartością skalarną.`);
+      }
+      if (typeof val === 'string' && val.length > 1000) {
+        throw new Error(`Wartość kolumny "${key}" w wierszu ${i + 1} przekracza 1000 znaków.`);
+      }
+      cleanAttrMap[key] = val;
+    }
+
+    cleanProducts.push({
+      id: Number(p.id) || (i + 1),
+      attributes: cleanAttrMap
+    });
+  }
+
+  return { attributes: cleanAttributes, products: cleanProducts };
+}
+
 function importProjectFromJson(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -1061,13 +1304,11 @@ function importProjectFromJson(e) {
   const reader = new FileReader();
   reader.onload = (event) => {
     try {
-      const data = JSON.parse(event.target.result);
-      if (!data.attributes || !data.products) {
-        throw new Error('Invalid project structure');
-      }
+      const rawData = JSON.parse(event.target.result);
+      const sanitized = sanitizeProjectData(rawData);
 
-      appState.attributes = data.attributes;
-      appState.products = data.products;
+      appState.attributes = sanitized.attributes;
+      appState.products = sanitized.products;
       if (appState.products.length > 0) {
         const maxId = Math.max(...appState.products.map(p => p.id || 0));
         appState.nextProductId = maxId + 1;
