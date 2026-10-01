@@ -42,7 +42,7 @@ def sample_contract() -> dict[str, object]:
         "custom_labels": None,
         "custom_network_aliases": None,
         "destination_type": "App\\Models\\StandaloneDocker",
-        "destination_id": 1,
+        "destination_id": 2,
         "max_restart_count": 10,
         "limits_memory": "512m",
         "limits_memory_swap": "512m",
