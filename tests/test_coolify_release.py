@@ -27,7 +27,7 @@ def sample_contract() -> dict[str, object]:
         "name": "inventory-generator",
         "build_pack": "dockerimage",
         "docker_registry_image_name": "ghcr.io/szczepangrela/inventory-generator",
-        "fqdn": "https://inventory-generator.grela.dev:8080/",
+        "fqdn": "https://inventory-generator.grela.dev:8080",
         "domains": None,
         "redirect": "both",
         "ports_exposes": "8080",
@@ -50,7 +50,7 @@ def sample_contract() -> dict[str, object]:
         "limits_memory_reservation": "128m",
         "limits_cpus": "1",
         "limits_cpu_shares": 1024,
-        "custom_docker_run_options": "--cap-drop ALL --init",
+        "custom_docker_run_options": "--cap-drop=ALL --init",
         "settings": {
             "connect_to_docker_network": False,
             "docker_images_to_keep": 2,
