@@ -244,7 +244,7 @@ def _compare_contract(
                     _compare_contract(actual_value, expected_value, label)
                 )
         elif actual_value != expected_value:
-            mismatches.append(label)
+            mismatches.append(f"{label} (expected {expected_value!r}, got {actual_value!r})")
     return mismatches
 
 
