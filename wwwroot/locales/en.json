@@ -24,7 +24,7 @@
   "btn_download": "Download File",
   "btn_back": "Back to Edit",
   "empty_state_title": "No items in inventory",
-  "empty_state_desc": "Add some products using the \"Add Product\" button to get started.",
+  "empty_state_desc": "Your inventory is empty. Add your first product or load an existing project from a JSON file.",
   "items_badge_one": "1 item",
   "items_badge_few": "items",
   "items_badge_many": "items",

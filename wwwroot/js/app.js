@@ -50,6 +50,8 @@ const elements = {
   inventoryThead: document.getElementById('inventory-thead'),
   inventoryTbody: document.getElementById('inventory-tbody'),
   emptyState: document.getElementById('empty-state'),
+  emptyAddProductBtn: document.getElementById('empty-add-product-btn'),
+  emptyImportJsonBtn: document.getElementById('empty-import-json-btn'),
   productCountBadge: document.getElementById('product-count-badge'),
   
   attributesPanel: document.getElementById('attributes-panel'),
@@ -240,6 +242,19 @@ function setupEventListeners() {
     exitEditMode();
     openModal(elements.productModal);
   });
+
+  if (elements.emptyAddProductBtn) {
+    elements.emptyAddProductBtn.addEventListener('click', () => {
+      exitEditMode();
+      openModal(elements.productModal);
+    });
+  }
+
+  if (elements.emptyImportJsonBtn) {
+    elements.emptyImportJsonBtn.addEventListener('click', () => {
+      elements.importJsonFile.click();
+    });
+  }
 
   elements.closeProductModalBtn.addEventListener('click', closeProductModal);
   elements.cancelProductBtn.addEventListener('click', closeProductModal);
