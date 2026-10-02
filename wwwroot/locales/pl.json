@@ -24,7 +24,7 @@
   "btn_download": "Pobierz plik",
   "btn_back": "Powrót do edycji",
   "empty_state_title": "Brak przedmiotów w spisie",
-  "empty_state_desc": "Dodaj produkty za pomocą przycisku \"Dodaj produkt\", aby rozpocząć.",
+  "empty_state_desc": "Twój spis jest pusty. Dodaj pierwszy produkt lub wczytaj istniejący projekt z pliku JSON.",
   "items_badge_one": "1 element",
   "items_badge_few": "elementy",
   "items_badge_many": "elementów",
