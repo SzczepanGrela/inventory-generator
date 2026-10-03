@@ -14,10 +14,10 @@ Originally created as a Windows Forms desktop application, this project was rede
 ┌──────────────────────────────┐       HTTP/REST       ┌─────────────────────────────┐
 │    Frontend (Browser SPA)    │  ◄──────────────────► │    Backend (API Server)     │
 │                              │                       │                             │
-│  • Local Storage (State)     │  POST /api/export     │ • C# ASP.NET Core 8         │
+│  • Local Storage (State)     │  POST /api/export     │ • C# ASP.NET Core 10 LTS    │
 │  • HTML5 / CSS3 (Responsive) │  GET /api/attributes  │ • Stateless Minimal API     │
 │  • SaaS Modal-based CRUD     │  GET /api/health      │ • OpenXML SDK 3.5           │
-│  • i18n Localization (PL/EN) │                       │ • Rate Limiting & Cost Caps │
+│  • i18n Localization (PL/EN) │                       │ • Rate Limiting (Cost Units)│
 │  • Prototype Pollution Guard │                       │ • Strict System.Text.Json   │
 │  • WCAG / ARIA Accessible    │                       │ • CSP & Security Headers    │
 │  • Full-width Data Table     │                       │ • Non-Root Hardened Docker  │
@@ -34,15 +34,20 @@ The application state (products, configuration, translations) is fully maintaine
   - Strict scalar-only validation: product cell attributes must be primitive scalar values (string, number, boolean, null); nested objects and arrays are rejected with `400 Bad Request`.
   - Client-side import hardening using null-prototype dictionaries (`Object.create(null)`) to prevent prototype pollution.
 - **Request Cost & Resource Limits**:
-  - Maximum HTTP request body size capped at 2 MB (`413 Payload Too Large`) enforced before stream materialization.
+  - Maximum HTTP request body size capped at 2 MB (`413 Payload Too Large`) enforced before stream materialization and on chunked streams.
   - Table dimensions bounded: max 50 columns, max 5,000 rows, max 50,000 cells.
   - Cell string values limited to 1,000 characters; attribute names limited to 100 characters.
-- **Rate Limiting & Concurrency**:
+- **Rate Limiting & Concurrency (Weighted Cost Units)**:
   - Partitioned rate limiter using trusted client IP (`X-Forwarded-For` with strict proxy validation).
-  - Shared export budget: 10 exports per minute per client with format-specific weighting.
-  - DOCX generation burst limit: maximum 2 per burst window.
-  - Concurrency limiter semaphore: maximum 3 concurrent document generations to protect single vCPU container performance.
+  - **Weighted Cost Unit Model**: Shared budget of 10 cost units per minute per client:
+    - CSV & HTML exports cost **1 cost unit**.
+    - DOCX export costs **2 cost units** + consumes from a dedicated burst bucket (capacity 2 tokens, refill 5/min).
+  - **Concurrency limiter semaphore**: maximum 3 concurrent document generations to protect single vCPU container performance and memory.
   - Returns `429 Too Many Requests` with standard `Retry-After` header; frontend displays an interactive countdown toast during cooldown.
+- **Export Performance & Resource Profile (Max Capacity 50,000 cells)**:
+  - **CSV (50 cols x 1,000 rows)**: ~4 ms execution, ~381 KB output, ~4 MB RAM.
+  - **HTML (50 cols x 1,000 rows)**: ~18 ms execution, ~1.93 MB output, ~15 MB RAM.
+  - **DOCX (50 cols x 1,000 rows)**: ~767 ms execution, ~107 KB output, ~128 MB RAM (justifying the 2x cost unit and burst throttle).
 - **Export Injection Defense**:
   - **CSV Formula Injection**: Leading formula characters (`=`, `+`, `-`, `@`, `\t`, `\r`) are escaped with a single quote prefix while preserving valid negative/positive numbers.
   - **HTML Encoding**: All exported headers and table values are strictly HTML-encoded.
@@ -88,7 +93,7 @@ The application state (products, configuration, translations) is fully maintaine
 ## Deployment & Release Architecture
 
 Inventory Generator follows the immutable container deployment pattern:
-- **Base Image**: Hardened Debian base (`mcr.microsoft.com/dotnet/aspnet:8.0`) with updated system packages and curl probe.
+- **Base Image**: Hardened Debian base (`mcr.microsoft.com/dotnet/aspnet:10.0`) with updated system packages and curl probe.
 - **Runtime Constraints**: Runs as non-root user (`UID 1654`), with `--cap-drop ALL --init`, memory capped at 512MB (128MB reservation), and 1 CPU.
 - **Coolify CD**: Automated deployment through Coolify REST API via `.github/workflows/deploy.yml` and `infra/coolify_release.py`.
 - **Artifact Verification**: Deploys only verified, tested, and attested GHCR image digests (`gh attestation verify`).
@@ -100,6 +105,7 @@ Inventory Generator follows the immutable container deployment pattern:
 
 ### Prerequisites
 - [.NET 10.0 SDK](https://dotnet.microsoft.com/download)
+- [Node.js 20+](https://nodejs.org/) (for Playwright browser end-to-end test suite)
 - [Python 3.10+](https://www.python.org/) (for release automation test suite)
 
 ### Run the Application locally
@@ -115,9 +121,14 @@ Inventory Generator follows the immutable container deployment pattern:
 3. Open your browser and navigate to `http://localhost:8080` (or configured port).
 
 ### Testing
-To run the automated .NET test suites (58 Unit & Integration tests):
+To run the automated .NET test suites (78 Unit, Benchmark & Integration tests):
 ```bash
 dotnet test inventory-generator.sln
+```
+
+To run the Playwright browser end-to-end test suite (Local-First, WCAG, XSS sinks, 429 countdown):
+```bash
+npm test --prefix tests/browser
 ```
 
 To run the Coolify CD release automation test suite (17 Python tests):
@@ -150,10 +161,10 @@ Początkowo stworzona jako aplikacja pulpitowa Windows Forms, projekt ten zosta�
 ┌──────────────────────────────┐       HTTP/REST       ┌─────────────────────────────┐
 │    Frontend (Browser SPA)    │  ◄──────────────────► │    Backend (API Server)     │
 │                              │                       │                             │
-│  • Local Storage (State)     │  POST /api/export     │ • C# ASP.NET Core 8         │
+│  • Local Storage (State)     │  POST /api/export     │ • C# ASP.NET Core 10 LTS    │
 │  • HTML5 / CSS3 (Responsywny)│  GET /api/attributes  │ • Stateless Minimal API     │
 │  • SaaS Modal-based CRUD     │  GET /api/health      │ • OpenXML SDK 3.5           │
-│  • i18n Lokalizacja (PL/EN)  │                       │ • Limity zasobów i zapytań  │
+│  • i18n Lokalizacja (PL/EN)  │                       │ • Limity (Jednostki Kosztu) │
 │  • Ochrona Prototype Pollut. │                       │ • Ścisły System.Text.Json   │
 │  • Dostępność WCAG / ARIA    │                       │ • Nagłówki CSP i nosniff    │
 │  • Pełnoekranowa Tabela Danych│                      │ • Bezpieczny Docker non-root│
@@ -170,15 +181,20 @@ Stan aplikacji (produkty, konfiguracja, tłumaczenia) jest w pełni utrzymywany 
   - Rygorystyczna walidacja skalarności: wartości w komórkach produktów mogą być wyłącznie typami pierwotnymi (string, number, boolean, null); zagnieżdżone obiekty lub tablice są odrzucane z kodem `400 Bad Request`.
   - Zabezpieczenie importu po stronie przeglądarki przy użyciu słowników z pustym prototypem (`Object.create(null)`).
 - **Limity Rozmiaru Żądań i Danych**:
-  - Maksymalny rozmiar body HTTP ograniczony do 2 MB (`413 Payload Too Large`), egzekwowany w Kestrel/middleware przed serializacją w pamięci.
+  - Maksymalny rozmiar body HTTP ograniczony do 2 MB (`413 Payload Too Large`), egzekwowany w Kestrel/middleware przed serializacją w pamięci oraz przy żądaniach strumieniowanych (chunked transfer).
   - Limity wymiarów tabeli: max 50 kolumn, max 5 000 wierszy, max 50 000 komórek.
   - Limit długości wartości tekstowej komórki: 1 000 znaków; limit nazwy atrybutu: 100 znaków.
-- **Wielopoziomowy Rate Limiting i Współbieżność**:
+- **Wielopoziomowy Rate Limiting i Współbieżność (Ważone Jednostki Kosztu)**:
   - Partycjonowanie po zaufanym adresie IP klienta (`X-Forwarded-For` z weryfikacją znanych proxy).
-  - Wspólny budżet eksportów: 10 generacji na minutę per klient ze współdzielonym licznikiem formatów.
-  - Limit burst dla DOCX: maksymalnie 2 generacje w oknie krótkim.
-  - Semafor współbieżności: maksymalnie 3 równoczesne generacje dokumentów chroniące 1 rdzeń vCPU na serwerze.
+  - **Model Jednostek Kosztu (Cost Units)**: Wspólny budżet 10 jednostek kosztu na minutę per klient:
+    - Eksport CSV i HTML kosztuje **1 jednostkę kosztu**.
+    - Eksport DOCX kosztuje **2 jednostki kosztu** + pobiera token z dedykowanej puli burst (pojemność 2 tokeny, uzupełnianie 5/min).
+  - **Semafor współbieżności**: maksymalnie 3 równoczesne generacje dokumentów chroniące pamięć RAM i procesor serwera.
   - Odpowiedź `429 Too Many Requests` z nagłówkiem `Retry-After`; interfejs użytkownika prezentuje czytelny toast z odliczaniem czasu.
+- **Profil Wydajnościowy i Zużycie Zasobów (Maksymalna Pojemność 50 000 komórek)**:
+  - **CSV (50 kolumn x 1 000 wierszy)**: czas ~4 ms, rozmiar ~381 KB, pamięć RAM ~4 MB.
+  - **HTML (50 kolumn x 1 000 wierszy)**: czas ~18 ms, rozmiar ~1,93 MB, pamięć RAM ~15 MB.
+  - **DOCX (50 kolumn x 1 000 wierszy)**: czas ~767 ms, rozmiar ~107 KB, pamięć RAM ~128 MB (uzasadniający 2x wagę kosztową oraz ogranicznik burst).
 - **Zabezpieczenie Generowanych Formatów**:
   - **CSV Formula Injection**: Znaki formuł kalkulacyjnych (`=`, `+`, `-`, `@`, `\t`, `\r`) na początku komórki są neutralizowane pojedynczym apostrofem, z zachowaniem poprawności liczb ujemnych i dodatnich.
   - **HTML Encoding**: Wszystkie nagłówki i wartości są ściśle eskejpowane funkcją `WebUtility.HtmlEncode`.
@@ -217,14 +233,14 @@ Stan aplikacji (produkty, konfiguracja, tłumaczenia) jest w pełni utrzymywany 
 |---|---|---|
 | `/api/health` | `GET` | Endpoint badania stanu zdrowia aplikacji zwracający status i rewizję commita |
 | `/api/attributes/default/{lang}` | `GET` | Pobiera domyślny schemat tabeli dla danego języka (`en`, `pl`) |
-| `/api/export/{format}` | `POST` | Eksportuje wygenerowany raport (`docx`, `csv`, `html`). Chroniony limitami body (2MB), limitami współbieżności i budżetem eksportów |
+| `/api/export/{format}` | `POST` | Eksportuje wygenerowany raport (`docx`, `csv`, `html`). Chroniony limitami body (2MB), limitami współbieżności i budżetem jednostek kosztu |
 
 ---
 
 ## Architektura Wdrażania i Wydania
 
 Aplikacja wdrażana jest według wzorca niezmiennego kontenera (immutable container):
-- **Obraz bazowy**: Zabezpieczony Debian (`mcr.microsoft.com/dotnet/aspnet:8.0`) z zaktualizowanymi pakietami i sondą curl.
+- **Obraz bazowy**: Zabezpieczony Debian (`mcr.microsoft.com/dotnet/aspnet:10.0`) z zaktualizowanymi pakietami i sondą curl.
 - **Ograniczenia środowiska**: Kontener uruchamiany jako non-root (`UID 1654`), z opcjami `--cap-drop ALL --init`, limitem pamięci 512MB (rezerwacja 128MB) oraz 1 vCPU.
 - **Coolify CD**: Automatyzacja wydania przez prywatne API Coolify za pośrednictwem workflow `.github/workflows/deploy.yml` i skryptu `infra/coolify_release.py`.
 - **Weryfikacja poświadczeń**: Wdrażane są wyłącznie poświadczone i przetestowane digesty z GHCR (`gh attestation verify`).
@@ -236,6 +252,7 @@ Aplikacja wdrażana jest według wzorca niezmiennego kontenera (immutable contai
 
 ### Wymagania
 - [.NET 10.0 SDK](https://dotnet.microsoft.com/download)
+- [Node.js 20+](https://nodejs.org/) (do testów przeglądarkowych Playwright)
 - [Python 3.10+](https://www.python.org/) (do testów automatyzacji wydania)
 
 ### Uruchamianie lokalne
@@ -251,9 +268,14 @@ Aplikacja wdrażana jest według wzorca niezmiennego kontenera (immutable contai
 3. Otwórz przeglądarkę pod adresem `http://localhost:8080`.
 
 ### Testowanie
-Uruchomienie testów .NET (58 testów jednostkowych i integracyjnych):
+Uruchomienie testów .NET (78 testów jednostkowych, benchmarkowych i integracyjnych):
 ```bash
 dotnet test inventory-generator.sln
+```
+
+Uruchomienie testów przeglądarkowych Playwright (Local-First, WCAG, odporność XSS, odliczanie 429):
+```bash
+npm test --prefix tests/browser
 ```
 
 Uruchomienie testów automatyzacji wydania Coolify (17 testów Python):

@@ -57,11 +57,17 @@ namespace InventoryGenerator.Api.Services
 
             var seenColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var attr in payload.Attributes)
+            for (int i = 0; i < payload.Attributes.Count; i++)
             {
+                var attr = payload.Attributes[i];
+                if (attr == null)
+                {
+                    return $"Attribute definition at index {i} cannot be null.";
+                }
+
                 if (string.IsNullOrWhiteSpace(attr.Name))
                 {
-                    return "Attribute name cannot be empty or whitespace.";
+                    return $"Attribute name at index {i} cannot be empty or whitespace.";
                 }
 
                 if (attr.Name.Length > MaxColumnNameLength)
@@ -84,8 +90,23 @@ namespace InventoryGenerator.Api.Services
                     return $"Duplicate attribute name: '{attr.Name}'.";
                 }
 
-                if (attr.Type == AttributeType.Enum && attr.EnumValues != null)
+                if (!Enum.IsDefined(typeof(AttributeType), attr.Type))
                 {
+                    return $"Attribute '{attr.Name}' has an invalid type: {attr.Type}.";
+                }
+
+                if (attr.ColumnWidth < 50 || attr.ColumnWidth > 5000)
+                {
+                    return $"Attribute '{attr.Name}' column width must be between 50 and 5000. Provided: {attr.ColumnWidth}.";
+                }
+
+                if (attr.Type == AttributeType.Enum)
+                {
+                    if (attr.EnumValues == null || attr.EnumValues.Count == 0)
+                    {
+                        return $"Attribute '{attr.Name}' of type Enum must contain at least one enum value.";
+                    }
+
                     if (attr.EnumValues.Count > 100)
                     {
                         return $"Attribute '{attr.Name}' exceeds maximum of 100 enum values.";
@@ -93,7 +114,12 @@ namespace InventoryGenerator.Api.Services
 
                     foreach (var enumVal in attr.EnumValues)
                     {
-                        if (enumVal != null && enumVal.Length > MaxColumnNameLength)
+                        if (enumVal == null)
+                        {
+                            return $"Attribute '{attr.Name}' contains a null enum value.";
+                        }
+
+                        if (enumVal.Length > MaxColumnNameLength)
                         {
                             return $"Enum value in '{attr.Name}' exceeds maximum length of {MaxColumnNameLength} characters.";
                         }
@@ -101,8 +127,14 @@ namespace InventoryGenerator.Api.Services
                 }
             }
 
-            foreach (var product in payload.Products)
+            for (int i = 0; i < payload.Products.Count; i++)
             {
+                var product = payload.Products[i];
+                if (product == null)
+                {
+                    return $"Product entry at index {i} cannot be null.";
+                }
+
                 if (product.Attributes == null)
                 {
                     return $"Product {product.Id} attributes dictionary cannot be null.";
@@ -110,6 +142,11 @@ namespace InventoryGenerator.Api.Services
 
                 foreach (var (key, val) in product.Attributes)
                 {
+                    if (string.IsNullOrWhiteSpace(key))
+                    {
+                        return $"Product {product.Id} contains an empty or whitespace attribute key.";
+                    }
+
                     if (ForbiddenKeys.Contains(key))
                     {
                         return $"Attribute key '{key}' in product {product.Id} is forbidden.";
@@ -143,7 +180,21 @@ namespace InventoryGenerator.Api.Services
                             return $"Cell value for '{key}' in product {product.Id} exceeds maximum length of {MaxCellValueLength} characters.";
                         }
                     }
-                    else if (val != null && val is not (bool or byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal or DateTime or DateTimeOffset))
+                    else if (val is double d)
+                    {
+                        if (double.IsNaN(d) || double.IsInfinity(d))
+                        {
+                            return $"Attribute value for '{key}' in product {product.Id} contains invalid floating point value.";
+                        }
+                    }
+                    else if (val is float f)
+                    {
+                        if (float.IsNaN(f) || float.IsInfinity(f))
+                        {
+                            return $"Attribute value for '{key}' in product {product.Id} contains invalid floating point value.";
+                        }
+                    }
+                    else if (val != null && val is not (bool or byte or sbyte or short or ushort or int or uint or long or ulong or decimal or DateTime or DateTimeOffset))
                     {
                         return $"Attribute value for '{key}' in product {product.Id} must be a scalar value (string, number, boolean, or null). Nested objects and arrays are forbidden.";
                     }

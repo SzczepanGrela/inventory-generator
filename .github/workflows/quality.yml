@@ -31,6 +31,11 @@ jobs:
       - run: dotnet test inventory-generator.sln --no-build --configuration Release
       - name: Test release automation (Python)
         run: python3 -m unittest discover -s tests -v
+      - name: Run browser end-to-end tests (Playwright)
+        run: |
+          npm ci --prefix tests/browser
+          npx --prefix tests/browser playwright install --with-deps chromium
+          npm test --prefix tests/browser
 
   container:
     name: Container
