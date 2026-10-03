@@ -78,5 +78,67 @@ namespace InventoryGenerator.UnitTests.Generators
             htmlBytes.Should().NotBeNullOrEmpty();
             docxBytes.Should().NotBeNullOrEmpty();
         }
+
+        [Fact]
+        public async Task Benchmark_Concurrent_Streaming_Docx()
+        {
+            int cols = 50;
+            int rows = 1000;
+
+            var attributes = new List<ProductAttribute>();
+            for (int c = 0; c < cols; c++)
+            {
+                attributes.Add(new ProductAttribute
+                {
+                    Name = $"Column_{c + 1}",
+                    Type = c % 2 == 0 ? AttributeType.String : AttributeType.Int,
+                    ColumnWidth = 800
+                });
+            }
+
+            var data = new List<Dictionary<string, object?>>(rows);
+            for (int r = 0; r < rows; r++)
+            {
+                var row = new Dictionary<string, object?>(cols);
+                for (int c = 0; c < cols; c++)
+                {
+                    row[$"Column_{c + 1}"] = c % 2 == 0 ? $"Val_{r}_{c}" : r * 10;
+                }
+                data.Add(row);
+            }
+
+            // Run 8 concurrent streaming DOCX generations (full concurrency pool)
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+
+            var proc = Process.GetCurrentProcess();
+            proc.Refresh();
+            var wsBefore = proc.WorkingSet64;
+
+            var sw = Stopwatch.StartNew();
+            var tasks = new Task<byte[]>[8];
+            for (int i = 0; i < 8; i++)
+            {
+                tasks[i] = Task.Run(() => new DocxGenerator().GenerateDocument(data, attributes));
+            }
+
+            var results = await Task.WhenAll(tasks);
+            sw.Stop();
+
+            proc.Refresh();
+            var wsPeak = proc.WorkingSet64;
+            double peakMb = wsPeak / (1024.0 * 1024.0);
+
+            _output.WriteLine($"8 CONCURRENT STREAMED DOCX (50k cells each = 400k cells): Time={sw.ElapsedMilliseconds}ms, PeakWorkingSet={peakMb:F2}MB");
+
+            foreach (var docx in results)
+            {
+                docx.Should().NotBeNullOrEmpty();
+            }
+
+            // Peak working set for 8 concurrent streaming DOCX must stay well under the 512 MB container limit
+            peakMb.Should().BeLessThan(350.0);
+        }
     }
 }
