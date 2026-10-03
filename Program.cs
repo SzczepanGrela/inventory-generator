@@ -166,7 +166,24 @@ app.Use(async (context, next) =>
             return;
         }
     }
-    await next();
+
+    try
+    {
+        await next();
+    }
+    catch (BadHttpRequestException ex) when (ex.StatusCode == StatusCodes.Status413PayloadTooLarge)
+    {
+        if (!context.Response.HasStarted)
+        {
+            context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+            await context.Response.WriteAsJsonAsync(new
+            {
+                status = StatusCodes.Status413PayloadTooLarge,
+                title = "Payload Too Large",
+                detail = "Request body exceeds 2MB limit."
+            });
+        }
+    }
 });
 
 app.UseDefaultFiles();
@@ -221,6 +238,8 @@ app.MapPost("/api/export/{format}", async (
     var rateLimitResult = rateLimiter.CheckAndConsume(clientIp, normalizedFormat);
     if (!rateLimitResult.Allowed)
     {
+        logger.LogWarning("Rate limit exceeded for client {ClientIp} on format {Format}. WaitSeconds: {RetryAfter}",
+            clientIp, normalizedFormat, rateLimitResult.RetryAfterSeconds);
         context.Response.Headers.RetryAfter = rateLimitResult.RetryAfterSeconds.ToString(CultureInfo.InvariantCulture);
         return Results.Problem(
             statusCode: StatusCodes.Status429TooManyRequests,
@@ -231,6 +250,8 @@ app.MapPost("/api/export/{format}", async (
     var validationError = PayloadValidator.Validate(payload);
     if (validationError != null)
     {
+        logger.LogWarning("Export payload validation failed for client {ClientIp} on format {Format}: {ValidationError}",
+            clientIp, normalizedFormat, validationError);
         return Results.BadRequest(new { error = validationError });
     }
 
@@ -238,6 +259,7 @@ app.MapPost("/api/export/{format}", async (
     bool slotAcquired = await rateLimiter.TryAcquireConcurrencySlotAsync(TimeSpan.Zero);
     if (!slotAcquired)
     {
+        logger.LogWarning("Export concurrency limit reached for client {ClientIp} on format {Format}", clientIp, normalizedFormat);
         context.Response.Headers.RetryAfter = "1";
         return Results.Problem(
             statusCode: StatusCodes.Status429TooManyRequests,
@@ -265,7 +287,14 @@ app.MapPost("/api/export/{format}", async (
             _ => throw new InvalidOperationException()
         };
 
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         var fileBytes = generator.GenerateDocument(data, attributes);
+        sw.Stop();
+
+        logger.LogInformation(
+            "Export completed: Format={Format}, ClientIp={ClientIp}, DurationMs={DurationMs}, Rows={Rows}, Columns={Columns}, OutputBytes={OutputBytes}",
+            normalizedFormat, clientIp, sw.ElapsedMilliseconds, payload.Products.Count, payload.Attributes.Count, fileBytes.Length);
+
         var fileName = $"inventory_{DateTime.UtcNow:yyyyMMdd_HHmmss}.{normalizedFormat}";
         return Results.File(fileBytes, contentType, fileName);
     }

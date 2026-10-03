@@ -318,27 +318,48 @@ function showConfirmModal(titleText, messageText, onConfirmCallback) {
 async function loadLocalData() {
   try {
     const savedAttributes = localStorage.getItem('inventory_attributes');
+    const savedProducts = localStorage.getItem('inventory_products');
+    let loadedSuccessfully = false;
+
     if (savedAttributes) {
-      appState.attributes = JSON.parse(savedAttributes);
-    } else {
-      // Fetch default attributes template from server if localStorage is empty
-      const res = await fetch(`${appState.apiBase}/api/attributes/default/${appState.currentLanguage}`);
-      if (res.ok) {
-        appState.attributes = await res.json();
-        saveAttributesToLocalStorage();
+      try {
+        const rawParsedAttributes = JSON.parse(savedAttributes);
+        const rawParsedProducts = savedProducts ? JSON.parse(savedProducts) : [];
+        const sanitized = sanitizeProjectData({
+          attributes: rawParsedAttributes,
+          products: rawParsedProducts
+        });
+
+        appState.attributes = sanitized.attributes;
+        appState.products = sanitized.products;
+        if (appState.products.length > 0) {
+          const maxId = Math.max(...appState.products.map(p => p.id || 0));
+          appState.nextProductId = maxId + 1;
+        } else {
+          appState.nextProductId = 1;
+        }
+        loadedSuccessfully = true;
+      } catch (cacheErr) {
+        console.warn('Corrupted local storage data detected, resetting to default:', cacheErr);
+        showToast(
+          getTranslation('toast_cache_corrupted') || 'Wykryto uszkodzone dane w pamięci podręcznej. Przywrócono domyślny szablon.',
+          'error'
+        );
       }
     }
 
-    const savedProducts = localStorage.getItem('inventory_products');
-    if (savedProducts) {
-      appState.products = JSON.parse(savedProducts);
-      // Calculate next ID
-      if (appState.products.length > 0) {
-        const maxId = Math.max(...appState.products.map(p => p.id || 0));
-        appState.nextProductId = maxId + 1;
+    if (!loadedSuccessfully) {
+      // Fetch default attributes template from server if localStorage is empty or corrupted
+      const res = await fetch(`${appState.apiBase}/api/attributes/default/${appState.currentLanguage}`);
+      if (res.ok) {
+        const defaultAttrs = await res.json();
+        const sanitized = sanitizeProjectData({ attributes: defaultAttrs, products: [] });
+        appState.attributes = sanitized.attributes;
+        appState.products = [];
+        appState.nextProductId = 1;
+        saveAttributesToLocalStorage();
+        saveProductsToLocalStorage();
       }
-    } else {
-      appState.products = [];
     }
 
     renderUI();
@@ -652,27 +673,52 @@ function renderAttributesSettings() {
     }
     
     const nameTd = document.createElement('td');
-    nameTd.innerText = attr.name;
+    nameTd.textContent = attr.name;
     tr.appendChild(nameTd);
 
     const typeTd = document.createElement('td');
-    typeTd.innerHTML = `<span class="badge">${attr.type}</span>`;
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = attr.type;
+    typeTd.appendChild(badge);
     tr.appendChild(typeTd);
 
     const emptyTd = document.createElement('td');
-    emptyTd.innerText = attr.canBeEmpty ? getTranslation('opt_yes') : getTranslation('opt_no');
+    emptyTd.textContent = attr.canBeEmpty ? getTranslation('opt_yes') : getTranslation('opt_no');
     tr.appendChild(emptyTd);
 
     const widthTd = document.createElement('td');
-    widthTd.innerText = attr.columnWidth;
+    widthTd.textContent = attr.columnWidth;
     tr.appendChild(widthTd);
 
     const boldTd = document.createElement('td');
     const styles = [];
-    if (attr.isBold) styles.push('<strong>B</strong>');
-    if (attr.isItalic) styles.push('<em>I</em>');
-    if (attr.isUnderline) styles.push('<u>U</u>');
-    boldTd.innerHTML = styles.length > 0 ? styles.join(' ') : '<span class="text-muted">-</span>';
+    if (attr.isBold) {
+      const strong = document.createElement('strong');
+      strong.textContent = 'B';
+      styles.push(strong);
+    }
+    if (attr.isItalic) {
+      const em = document.createElement('em');
+      em.textContent = 'I';
+      styles.push(em);
+    }
+    if (attr.isUnderline) {
+      const u = document.createElement('u');
+      u.textContent = 'U';
+      styles.push(u);
+    }
+    if (styles.length > 0) {
+      styles.forEach((el, i) => {
+        if (i > 0) boldTd.appendChild(document.createTextNode(' '));
+        boldTd.appendChild(el);
+      });
+    } else {
+      const muted = document.createElement('span');
+      muted.className = 'text-muted';
+      muted.textContent = '-';
+      boldTd.appendChild(muted);
+    }
     tr.appendChild(boldTd);
 
     const actionTd = document.createElement('td');
@@ -970,10 +1016,14 @@ function showRateLimitToast(detail, waitSeconds) {
   toast.id = 'rate-limit-toast';
 
   const updateMessage = () => {
-    toast.innerHTML = `
-      <i class="fa-solid fa-hourglass-half toast-icon"></i>
-      <span class="toast-message">${detail} (${getTranslation('toast_rate_limited')}${remaining}s)</span>
-    `;
+    toast.textContent = '';
+    const icon = document.createElement('i');
+    icon.className = 'fa-solid fa-hourglass-half toast-icon';
+    const messageSpan = document.createElement('span');
+    messageSpan.className = 'toast-message';
+    messageSpan.textContent = `${detail} (${getTranslation('toast_rate_limited')}${remaining}s)`;
+    toast.appendChild(icon);
+    toast.appendChild(messageSpan);
   };
 
   updateMessage();
@@ -1240,8 +1290,11 @@ function sanitizeProjectData(raw) {
   const cleanAttributes = [];
   const seenNames = new Set();
 
-  for (const attr of raw.attributes) {
-    if (!attr || typeof attr !== 'object') continue;
+  for (let i = 0; i < raw.attributes.length; i++) {
+    const attr = raw.attributes[i];
+    if (!attr || typeof attr !== 'object' || Array.isArray(attr)) {
+      throw new Error(`Definicja kolumny #${i + 1} jest nieprawidłowa (wymagany obiekt).`);
+    }
     const name = String(attr.name || '').trim();
     if (!name || name.length > 100) {
       throw new Error(`Nieprawidłowa nazwa kolumny: "${name}".`);
@@ -1257,18 +1310,34 @@ function sanitizeProjectData(raw) {
     const allowedTypes = ['String', 'Int', 'Double', 'DateTime', 'Bool', 'Enum'];
     const type = allowedTypes.includes(attr.type) ? attr.type : 'String';
 
+    let cleanEnumValues = [];
+    if (type === 'Enum') {
+      if (!Array.isArray(attr.enumValues) || attr.enumValues.length === 0) {
+        throw new Error(`Kolumna "${name}" typu Enum musi definiować listę wartości.`);
+      }
+      cleanEnumValues = attr.enumValues
+        .map(v => String(v || '').trim())
+        .filter(Boolean)
+        .slice(0, 100);
+      if (cleanEnumValues.length === 0) {
+        throw new Error(`Kolumna "${name}" typu Enum musi definiować co najmniej jedną niepustą wartość.`);
+      }
+    }
+
     cleanAttributes.push({
       name,
       type,
       canBeEmpty: Boolean(attr.canBeEmpty),
-      enumValues: Array.isArray(attr.enumValues)
-        ? attr.enumValues.map(v => String(v || '').trim()).filter(Boolean).slice(0, 100)
-        : [],
+      enumValues: cleanEnumValues,
       columnWidth: Math.min(4000, Math.max(200, Number(attr.columnWidth) || 800)),
       isBold: Boolean(attr.isBold),
       isItalic: Boolean(attr.isItalic),
       isUnderline: Boolean(attr.isUnderline)
     });
+  }
+
+  if (cleanAttributes.length === 0) {
+    throw new Error('Projekt musi zawierać co najmniej jedną poprawną kolumnę.');
   }
 
   if (!Array.isArray(raw.products)) {
@@ -1284,7 +1353,12 @@ function sanitizeProjectData(raw) {
   const cleanProducts = [];
   for (let i = 0; i < raw.products.length; i++) {
     const p = raw.products[i];
-    if (!p || typeof p !== 'object') continue;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) {
+      throw new Error(`Wpis produktu #${i + 1} jest nieprawidłowy (wymagany obiekt).`);
+    }
+    if (p.attributes !== undefined && p.attributes !== null && (typeof p.attributes !== 'object' || Array.isArray(p.attributes))) {
+      throw new Error(`Atrybuty produktu #${i + 1} muszą być obiektem.`);
+    }
 
     const cleanAttrMap = Object.create(null);
     const rawAttrs = p.attributes || {};
@@ -1363,10 +1437,14 @@ function showToast(message, type = 'success') {
   if (type === 'error') iconClass = 'fa-triangle-exclamation';
   if (type === 'info') iconClass = 'fa-info-circle';
 
-  toast.innerHTML = `
-    <i class="fa-solid ${iconClass} toast-icon"></i>
-    <span class="toast-message">${message}</span>
-  `;
+  const icon = document.createElement('i');
+  icon.className = `fa-solid ${iconClass} toast-icon`;
+  const messageSpan = document.createElement('span');
+  messageSpan.className = 'toast-message';
+  messageSpan.textContent = message;
+
+  toast.appendChild(icon);
+  toast.appendChild(messageSpan);
 
   elements.toastContainer.appendChild(toast);
 

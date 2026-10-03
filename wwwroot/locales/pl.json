@@ -77,6 +77,7 @@
   "toast_rate_limited": "Limit żądań eksportu przekroczony. Spróbuj ponownie za ",
   "toast_payload_too_large": "Rozmiar danych przekracza dozwolony limit 2 MB.",
   "toast_storage_full": "Pamięć podręczna przeglądarki jest pełna. Pobierz kopię JSON i usuń stare wpisy.",
+  "toast_cache_corrupted": "Wykryto uszkodzone dane w pamięci podręcznej. Przywrócono domyślny szablon.",
   "aria_close_modal": "Zamknij okno",
   "aria_theme_toggle": "Przełącz motyw jasny/ciemny",
   "aria_settings_toggle": "Ustawienia kolumn i atrybutów"
