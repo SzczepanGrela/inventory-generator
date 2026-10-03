@@ -48,14 +48,16 @@ Zgodnie z wytycznymi koordynatora (`inventory-generator-gemini-closeout.md` i au
   - Test 6: Odliczanie sekund w toascie limitu 429 i blokada przycisku pobierania – PASS.
 - **Integracja w CI (`.github/workflows/quality.yml`)**: Krok `Browser E2E Tests (Playwright)` zintegrowany w bramce `Quality gate`.
 
-### Zadanie 4: Pomiary wydajności i jednostki kosztu (Cost Units)
-- Przeprowadzono testy wydajnościowe dla maksymalnej dopuszczalnej pojemności (50 kolumn x 1 000 wierszy = 50 000 komórek):
-  - **CSV**: czas ~4 ms, plik 380.8 KB, alokacja RAM ~3.9 MB
-  - **HTML**: czas ~18 ms, plik 1.93 MB, alokacja RAM ~14.6 MB
-  - **DOCX**: czas ~767 ms, plik 107.3 KB, alokacja RAM ~127.6 MB
-- Udokumentowano model ważonych jednostek kosztu (*cost units*) w `README.md`:
-  - CSV / HTML = 1 jednostka kosztu
-  - DOCX = 2 jednostki kosztu + bucket burst + maksymalnie 3 współbieżne sloty semafora.
+### Zadanie 4: Pomiary wydajności, optymalizacja strumieniowa DOCX i jednostki kosztu (Cost Units)
+- **Refaktoryzacja `DocxGenerator` na `OpenXmlWriter` (strumieniowy zapis XML)**:
+  - Zastąpiono tworzenie pełnego drzewa DOM OpenXML zapisem strumieniowym linia-po-linii.
+  - Redukcja alokacji pamięci dla 50k komórek ze **127.6 MB** do **13.2 MB** (spadek o 89.7%!).
+  - Skrócenie czasu generowania z **~767 ms** do **~490 ms**.
+- **Semafor współbieżności z kolejkowaniem w pamięci (Concurrency Queue)**:
+  - Zwiększono limit aktywnych generacji z 3 do **8 równoległych slotów**.
+  - Wprowadzono bezpieczne kolejkowanie w żądaniu HTTP do 5 sekund (`TimeSpan.FromSeconds(5)`) z obsługą anulowania przez klienta (`RequestAborted`).
+  - Pomiar obciążeniowy 8 jednoczesnych max-size DOCX (łącznie 400 000 komórek): czas **585 ms**, szczytowy Working Set procesu zaledwie **297 MB** (bezpiecznie poniżej limitu 512 MB kontenera).
+- Udokumentowano model ważonych jednostek kosztu (*cost units*) i profil zasobów w `README.md`.
 
 ### Zadanie 5: Aktualizacja dokumentacji i obsługa Dependabota
 - Usunięto nieaktualne wzmianki o .NET 8 w `README.md`, zastępując je specyfikacją .NET 10 LTS.

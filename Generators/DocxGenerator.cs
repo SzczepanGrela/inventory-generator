@@ -27,14 +27,11 @@ namespace InventoryGenerator.Api.Generators
                 using (WordprocessingDocument wordDocument = WordprocessingDocument.Create(mem, WordprocessingDocumentType.Document))
                 {
                     MainDocumentPart mainPart = wordDocument.AddMainDocumentPart();
-                    mainPart.Document = new Document();
-                    Body body = mainPart.Document.AppendChild(new Body());
 
                     // Margins
                     SectionProperties sectionProps = new SectionProperties();
                     PageMargin pageMargin = new PageMargin() { Top = 1440, Bottom = 1440, Left = 1440, Right = 1440 };
                     sectionProps.Append(pageMargin);
-                    body.Append(sectionProps);
 
                     // Title
                     Paragraph titleParagraph = new Paragraph();
@@ -51,7 +48,6 @@ namespace InventoryGenerator.Api.Generators
                     );
                     titleRun.Append(titleRunProps);
                     titleParagraph.Append(titleRun);
-                    body.Append(titleParagraph);
 
                     // Width scaling
                     int maxTableWidth = 9350;
@@ -66,8 +62,6 @@ namespace InventoryGenerator.Api.Generators
                     {
                         scaledWidths = columnHeaders.Select(_ => maxTableWidth / Math.Max(1, columnHeaders.Count)).ToList();
                     }
-
-                    Table table = new Table();
 
                     TableProperties tableProperties = new TableProperties(
                         new TableWidth { Width = "5000", Type = TableWidthUnitValues.Pct },
@@ -93,14 +87,12 @@ namespace InventoryGenerator.Api.Generators
                         new InsideVerticalBorder { Val = BorderValues.Single, Size = 4, Color = "E0E0E0" }
                     );
                     tableProperties.Append(tableBorders);
-                    table.AppendChild(tableProperties);
 
                     TableGrid tableGrid = new TableGrid();
                     foreach (int width in scaledWidths)
                     {
                         tableGrid.Append(new GridColumn() { Width = width.ToString() });
                     }
-                    table.Append(tableGrid);
 
                     // 1. Header Row
                     TableRow headerRow = new TableRow();
@@ -132,65 +124,86 @@ namespace InventoryGenerator.Api.Generators
                         headerCell.Append(paragraph);
                         headerRow.Append(headerCell);
                     }
-                    table.Append(headerRow);
 
-                    // 2. Data Rows
-                    foreach (var rowData in data)
+                    // Write document structure using OpenXmlWriter (streaming mode)
+                    using (OpenXmlWriter writer = OpenXmlWriter.Create(mainPart))
                     {
-                        TableRow row = new TableRow();
-                        TableRowProperties rowProps = new TableRowProperties(new TableRowHeight() { Val = 300 });
-                        row.Append(rowProps);
+                        writer.WriteStartElement(new Document());
+                        writer.WriteStartElement(new Body());
 
-                        for (int i = 0; i < attributes.Count; i++)
+                        // Title
+                        writer.WriteElement(titleParagraph);
+
+                        // Table
+                        writer.WriteStartElement(new Table());
+                        writer.WriteElement(tableProperties);
+                        writer.WriteElement(tableGrid);
+                        writer.WriteElement(headerRow);
+
+                        // 2. Data Rows (streamed row-by-row)
+                        foreach (var rowData in data)
                         {
-                            var attr = attributes[i];
-                            string header = attr.Name;
-                            object? value = rowData.TryGetValue(header, out var v) ? v : null;
-                            string textValue = ValueHelper.ExtractScalarString(value);
+                            TableRow row = new TableRow();
+                            TableRowProperties rowProps = new TableRowProperties(new TableRowHeight() { Val = 300 });
+                            row.Append(rowProps);
 
-                            TableCell cell = new TableCell();
-                            TableCellProperties cellProps = new TableCellProperties(
-                                new TableCellWidth { Type = TableWidthUnitValues.Dxa, Width = scaledWidths[i].ToString() }
-                            );
-                            cell.Append(cellProps);
-
-                            Paragraph paragraph = new Paragraph();
-                            bool alignRight = ValueHelper.IsNumeric(value);
-                            ParagraphProperties paraProps = new ParagraphProperties(
-                                new Justification() { Val = alignRight ? JustificationValues.Right : JustificationValues.Left }
-                            );
-                            paragraph.Append(paraProps);
-
-                            Run run = new Run(CreateText(textValue));
-                            RunProperties runProps = new RunProperties(
-                                new RunFonts() { Ascii = "Calibri", HighAnsi = "Calibri" },
-                                new FontSize() { Val = "20" }
-                            );
-
-                            if (attr.IsBold)
+                            for (int i = 0; i < attributes.Count; i++)
                             {
-                                runProps.Append(new Bold());
-                            }
-                            if (attr.IsItalic)
-                            {
-                                runProps.Append(new Italic());
-                            }
-                            if (attr.IsUnderline)
-                            {
-                                runProps.Append(new Underline() { Val = UnderlineValues.Single });
+                                var attr = attributes[i];
+                                string header = attr.Name;
+                                object? value = rowData.TryGetValue(header, out var v) ? v : null;
+                                string textValue = ValueHelper.ExtractScalarString(value);
+
+                                TableCell cell = new TableCell();
+                                TableCellProperties cellProps = new TableCellProperties(
+                                    new TableCellWidth { Type = TableWidthUnitValues.Dxa, Width = scaledWidths[i].ToString() }
+                                );
+                                cell.Append(cellProps);
+
+                                Paragraph paragraph = new Paragraph();
+                                bool alignRight = ValueHelper.IsNumeric(value);
+                                ParagraphProperties paraProps = new ParagraphProperties(
+                                    new Justification() { Val = alignRight ? JustificationValues.Right : JustificationValues.Left }
+                                );
+                                paragraph.Append(paraProps);
+
+                                Run run = new Run(CreateText(textValue));
+                                RunProperties runProps = new RunProperties(
+                                    new RunFonts() { Ascii = "Calibri", HighAnsi = "Calibri" },
+                                    new FontSize() { Val = "20" }
+                                );
+
+                                if (attr.IsBold)
+                                {
+                                    runProps.Append(new Bold());
+                                }
+                                if (attr.IsItalic)
+                                {
+                                    runProps.Append(new Italic());
+                                }
+                                if (attr.IsUnderline)
+                                {
+                                    runProps.Append(new Underline() { Val = UnderlineValues.Single });
+                                }
+
+                                run.Append(runProps);
+                                paragraph.Append(run);
+
+                                cell.Append(paragraph);
+                                row.Append(cell);
                             }
 
-                            run.Append(runProps);
-                            paragraph.Append(run);
-
-                            cell.Append(paragraph);
-                            row.Append(cell);
+                            writer.WriteElement(row);
                         }
-                        table.Append(row);
-                    }
 
-                    body.Append(table);
-                    wordDocument.Save();
+                        writer.WriteEndElement(); // </w:tbl>
+
+                        // Margins and section properties
+                        writer.WriteElement(sectionProps);
+
+                        writer.WriteEndElement(); // </w:body>
+                        writer.WriteEndElement(); // </w:document>
+                    }
                 }
                 return mem.ToArray();
             }
