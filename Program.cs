@@ -55,7 +55,7 @@ if (trustedProxyIps.Count > 0)
     {
         options.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
         options.ForwardLimit = trustedProxyIps.Count;
-        options.KnownNetworks.Clear();
+        options.KnownIPNetworks.Clear();
         options.KnownProxies.Clear();
 
         foreach (var address in trustedProxyIps)

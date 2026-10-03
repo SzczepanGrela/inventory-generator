@@ -99,7 +99,7 @@ Inventory Generator follows the immutable container deployment pattern:
 ## Getting Started
 
 ### Prerequisites
-- [.NET 8.0 SDK](https://dotnet.microsoft.com/download)
+- [.NET 10.0 SDK](https://dotnet.microsoft.com/download)
 - [Python 3.10+](https://www.python.org/) (for release automation test suite)
 
 ### Run the Application locally
@@ -235,7 +235,7 @@ Aplikacja wdrażana jest według wzorca niezmiennego kontenera (immutable contai
 ## Uruchamianie i Testowanie
 
 ### Wymagania
-- [.NET 8.0 SDK](https://dotnet.microsoft.com/download)
+- [.NET 10.0 SDK](https://dotnet.microsoft.com/download)
 - [Python 3.10+](https://www.python.org/) (do testów automatyzacji wydania)
 
 ### Uruchamianie lokalne
