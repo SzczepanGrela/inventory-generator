@@ -1,5 +1,5 @@
 # Build stage
-FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:0eeb52c76e35a5431ca707ad2bc75e38006a05393045d8532ae44c15d9474523 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317 AS build
 WORKDIR /src
 COPY ["inventory-generator.csproj", "./"]
 RUN dotnet restore "inventory-generator.csproj"
@@ -7,7 +7,7 @@ COPY . .
 RUN dotnet publish "inventory-generator.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
 # Final runtime stage
-FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:0fa044f682cb7d93a5a90401a00c626c66f7b00b86922be9441f869eae039f80 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:222759b391a1aaf241166672c8f99b2d4ada452e7b5319f3c6e8f265a37b5ad4 AS final
 WORKDIR /app
 RUN apt-get update \
     && apt-get upgrade -y \
