@@ -269,6 +269,36 @@
     </div>
   </div>
 
+  <!-- Cache Recovery Modal -->
+  <div id="recovery-modal" class="modal-backdrop hide" role="alertdialog" aria-modal="true" aria-labelledby="recovery-title" aria-describedby="recovery-desc">
+    <div class="modal modal-md">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <i class="fa-solid fa-triangle-exclamation text-orange"></i>
+          <h2 id="recovery-title">Wykryto problem z zapisanym projektem</h2>
+        </div>
+      </div>
+      <div class="modal-body">
+        <p id="recovery-desc" class="mb-15">
+          Dane w pamięci podręcznej przeglądarki nie mogły zostać bezpiecznie załadowane. Twoje dane <strong>nie zostały usunięte</strong> z pamięci podręcznej.
+        </p>
+        <p id="recovery-error-message" class="subtitle text-danger mb-15"></p>
+        <p class="subtitle mb-15">Możesz pobrać kopię ratunkową w formacie JSON lub jawnie zresetować projekt do domyślnego szablonu.</p>
+      </div>
+      <div class="modal-footer">
+        <button id="recovery-download-btn" class="btn btn-primary">
+          <i class="fa-solid fa-download"></i> <span>Pobierz kopię awaryjną (JSON)</span>
+        </button>
+        <button id="recovery-reset-btn" class="btn btn-danger">
+          <i class="fa-solid fa-rotate-left"></i> <span>Zresetuj do domyślnych</span>
+        </button>
+        <button id="recovery-dismiss-btn" class="btn btn-outline">
+          <i class="fa-solid fa-xmark"></i> <span>Tylko w pamięci</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Confirm Modal -->
   <div id="confirm-modal" class="modal-backdrop hide confirm-modal-backdrop" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
     <div class="modal modal-sm confirm-modal">

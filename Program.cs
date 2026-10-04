@@ -247,12 +247,12 @@ app.MapPost("/api/export/{format}", async (
     }
 
     // Payload validation: caps, scalar-only, anti-injection, anti-prototype pollution
-    var validationError = PayloadValidator.Validate(payload);
-    if (validationError != null)
+    var validationResult = PayloadValidator.ValidatePayload(payload);
+    if (!validationResult.IsValid)
     {
-        logger.LogWarning("Export payload validation failed for client {ClientIp} on format {Format}: {ValidationError}",
-            clientIp, normalizedFormat, validationError);
-        return Results.BadRequest(new { error = validationError });
+        logger.LogWarning("Export payload validation rejected. ClientIp: {ClientIp}, Format: {Format}, ErrorCode: {ErrorCode}, Columns: {ColumnsCount}, Rows: {RowsCount}",
+            clientIp, normalizedFormat, validationResult.ErrorCode, validationResult.ColumnsCount, validationResult.RowsCount);
+        return Results.BadRequest(new { error = validationResult.ErrorMessage, code = validationResult.ErrorCode });
     }
 
     // Concurrency limiting: server overload protection (3 slots, immediate no-wait admission)

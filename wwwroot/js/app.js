@@ -101,9 +101,14 @@ const elements = {
   closeModalBtn: document.getElementById('close-modal-btn'),
   modalCloseBtn: document.getElementById('modal-close-btn'),
   modalDownloadBtn: document.getElementById('modal-download-btn'),
-  documentPreviewContainer: document.getElementById('document-preview-container'),
-  
-  toastContainer: document.getElementById('toast-container')
+  toastContainer: document.getElementById('toast-container'),
+
+  // Cache Recovery Modal
+  recoveryModal: document.getElementById('recovery-modal'),
+  recoveryDownloadBtn: document.getElementById('recovery-download-btn'),
+  recoveryResetBtn: document.getElementById('recovery-reset-btn'),
+  recoveryDismissBtn: document.getElementById('recovery-dismiss-btn'),
+  recoveryErrorMessage: document.getElementById('recovery-error-message')
 };
 
 // Initialize Application
@@ -277,6 +282,17 @@ function setupEventListeners() {
   elements.closeModalBtn.addEventListener('click', closePreviewModal);
   elements.modalCloseBtn.addEventListener('click', closePreviewModal);
   elements.modalDownloadBtn.addEventListener('click', executeDownload);
+
+  // Recovery modal listeners
+  if (elements.recoveryDownloadBtn) {
+    elements.recoveryDownloadBtn.addEventListener('click', downloadRecoveryBackup);
+  }
+  if (elements.recoveryResetBtn) {
+    elements.recoveryResetBtn.addEventListener('click', resetCorruptedCacheToDefault);
+  }
+  if (elements.recoveryDismissBtn) {
+    elements.recoveryDismissBtn.addEventListener('click', dismissCacheRecovery);
+  }
 }
 
 function showConfirmModal(titleText, messageText, onConfirmCallback) {
@@ -315,16 +331,89 @@ function showConfirmModal(titleText, messageText, onConfirmCallback) {
 // ----------------------------------------------------
 // LOCAL-FIRST DATA STORAGE (localStorage)
 // ----------------------------------------------------
+function showCacheRecoveryModal(errorMessage) {
+  if (!elements.recoveryModal) return;
+  if (elements.recoveryErrorMessage) {
+    elements.recoveryErrorMessage.textContent = errorMessage || '';
+  }
+  openModal(elements.recoveryModal);
+}
+
+function closeCacheRecoveryModal() {
+  if (!elements.recoveryModal) return;
+  closeModal(elements.recoveryModal);
+}
+
+function downloadRecoveryBackup() {
+  if (!appState.corruptedCache) return;
+  let attrs = appState.corruptedCache.rawAttributes;
+  let prods = appState.corruptedCache.rawProducts;
+  try { attrs = JSON.parse(attrs); } catch {}
+  try { prods = JSON.parse(prods); } catch {}
+
+  const recoveryPayload = {
+    _recoveryNotice: "Awaryjny zrzut surowych danych z localStorage przed resetem",
+    exportedAt: new Date().toISOString(),
+    error: appState.corruptedCache.errorMessage,
+    attributes: attrs,
+    products: prods
+  };
+
+  const blob = new Blob([JSON.stringify(recoveryPayload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `inventory_recovery_backup_${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Pobrano kopię awaryjną.', 'success');
+}
+
+async function resetCorruptedCacheToDefault() {
+  try {
+    const res = await fetch(`${appState.apiBase}/api/attributes/default/${appState.currentLanguage}`);
+    if (res.ok) {
+      const defaultAttrs = await res.json();
+      const sanitized = sanitizeProjectData({ attributes: defaultAttrs, products: [] });
+      appState.attributes = sanitized.attributes;
+      appState.products = [];
+      appState.nextProductId = 1;
+      appState.corruptedCache = null;
+      saveAttributesToLocalStorage();
+      saveProductsToLocalStorage();
+      renderUI();
+      closeCacheRecoveryModal();
+      showToast('Zresetowano dane do domyślnego szablonu.', 'info');
+    }
+  } catch (err) {
+    closeCacheRecoveryModal();
+    console.error('Failed to reset default template:', err);
+    showToast('Błąd pobierania szablonu domyślnego.', 'error');
+  }
+}
+
+function dismissCacheRecovery() {
+  closeCacheRecoveryModal();
+  showToast('Kontynuujesz w trybie tymczasowym (pamięć lokalna nie została nadpisana).', 'warning');
+}
+
 async function loadLocalData() {
   try {
     const savedAttributes = localStorage.getItem('inventory_attributes');
     const savedProducts = localStorage.getItem('inventory_products');
     let loadedSuccessfully = false;
+    let corruptedDetected = false;
+    let corruptionMessage = '';
 
-    if (savedAttributes) {
+    if (savedAttributes !== null || savedProducts !== null) {
       try {
-        const rawParsedAttributes = JSON.parse(savedAttributes);
+        const rawParsedAttributes = savedAttributes ? JSON.parse(savedAttributes) : null;
         const rawParsedProducts = savedProducts ? JSON.parse(savedProducts) : [];
+        if (!rawParsedAttributes) {
+          throw new Error('Brak zdefiniowanych atrybutów w projekcie.');
+        }
         const sanitized = sanitizeProjectData({
           attributes: rawParsedAttributes,
           products: rawParsedProducts
@@ -340,25 +429,59 @@ async function loadLocalData() {
         }
         loadedSuccessfully = true;
       } catch (cacheErr) {
-        console.warn('Corrupted local storage data detected, resetting to default:', cacheErr);
+        corruptedDetected = true;
+        corruptionMessage = cacheErr.message || 'Błąd walidacji danych w pamięci podręcznej.';
+        console.warn('Lokalny cache jest uszkodzony lub niezgodny:', cacheErr);
+
+        // IC03-1: Preserve raw cache in localStorage. Do NOT overwrite storage with empty template!
+        appState.corruptedCache = {
+          rawAttributes: savedAttributes,
+          rawProducts: savedProducts,
+          errorMessage: corruptionMessage
+        };
+
         showToast(
-          getTranslation('toast_cache_corrupted') || 'Wykryto uszkodzone dane w pamięci podręcznej. Przywrócono domyślny szablon.',
+          getTranslation('toast_cache_corrupted') || 'Wykryto problem z danymi w pamięci podręcznej. Surowe dane zostały zachowane.',
           'error'
         );
+
+        showCacheRecoveryModal(corruptionMessage);
       }
     }
 
     if (!loadedSuccessfully) {
-      // Fetch default attributes template from server if localStorage is empty or corrupted
-      const res = await fetch(`${appState.apiBase}/api/attributes/default/${appState.currentLanguage}`);
-      if (res.ok) {
-        const defaultAttrs = await res.json();
-        const sanitized = sanitizeProjectData({ attributes: defaultAttrs, products: [] });
-        appState.attributes = sanitized.attributes;
+      // If there was no previous cache at all (genuine first-time load):
+      if (!corruptedDetected) {
+        try {
+          const res = await fetch(`${appState.apiBase}/api/attributes/default/${appState.currentLanguage}`);
+          if (res.ok) {
+            const defaultAttrs = await res.json();
+            const sanitized = sanitizeProjectData({ attributes: defaultAttrs, products: [] });
+            appState.attributes = sanitized.attributes;
+            appState.products = [];
+            appState.nextProductId = 1;
+            saveAttributesToLocalStorage();
+            saveProductsToLocalStorage();
+          }
+        } catch (fetchErr) {
+          console.error('Failed to load default attributes on first run:', fetchErr);
+        }
+      } else {
+        // Corrupted cache was detected: provide in-memory fallback template without touching localStorage
+        try {
+          const res = await fetch(`${appState.apiBase}/api/attributes/default/${appState.currentLanguage}`);
+          if (res.ok) {
+            const defaultAttrs = await res.json();
+            appState.attributes = defaultAttrs;
+          } else {
+            appState.attributes = [];
+          }
+        } catch {
+          appState.attributes = [];
+        }
         appState.products = [];
         appState.nextProductId = 1;
-        saveAttributesToLocalStorage();
-        saveProductsToLocalStorage();
+        // Do NOT call saveAttributesToLocalStorage() or saveProductsToLocalStorage()!
       }
     }
 
@@ -1308,31 +1431,92 @@ function sanitizeProjectData(raw) {
     seenNames.add(name.toLowerCase());
 
     const allowedTypes = ['String', 'Int', 'Double', 'DateTime', 'Bool', 'Enum'];
-    const type = allowedTypes.includes(attr.type) ? attr.type : 'String';
+    let type = 'String';
+    if (attr.type === undefined || attr.type === null || attr.type === '') {
+      type = 'String'; // compatible default for missing legacy field
+    } else if (typeof attr.type !== 'string' || !allowedTypes.includes(attr.type)) {
+      throw new Error(`Kolumna "${name}" ma nieprawidłowy typ danych: "${attr.type}".`);
+    } else {
+      type = attr.type;
+    }
 
     let cleanEnumValues = [];
     if (type === 'Enum') {
       if (!Array.isArray(attr.enumValues) || attr.enumValues.length === 0) {
         throw new Error(`Kolumna "${name}" typu Enum musi definiować listę wartości.`);
       }
+      for (let e = 0; e < attr.enumValues.length; e++) {
+        const val = attr.enumValues[e];
+        if (typeof val !== 'string' && typeof val !== 'number') {
+          throw new Error(`Wartość #${e + 1} na liście Enum kolumny "${name}" musi być ciągiem znaków.`);
+        }
+      }
       cleanEnumValues = attr.enumValues
-        .map(v => String(v || '').trim())
+        .map(v => String(v ?? '').trim())
         .filter(Boolean)
         .slice(0, 100);
       if (cleanEnumValues.length === 0) {
         throw new Error(`Kolumna "${name}" typu Enum musi definiować co najmniej jedną niepustą wartość.`);
       }
+    } else {
+      cleanEnumValues = [];
+    }
+
+    // Boolean fields with compatible defaults for missing legacy fields and strict type checks
+    let cleanCanBeEmpty = true;
+    if (attr.canBeEmpty === undefined || attr.canBeEmpty === null) {
+      cleanCanBeEmpty = true;
+    } else if (typeof attr.canBeEmpty !== 'boolean') {
+      throw new Error(`Właściwość canBeEmpty kolumny "${name}" musi być typu boolean.`);
+    } else {
+      cleanCanBeEmpty = attr.canBeEmpty;
+    }
+
+    let cleanIsBold = false;
+    if (attr.isBold === undefined || attr.isBold === null) {
+      cleanIsBold = false;
+    } else if (typeof attr.isBold !== 'boolean') {
+      throw new Error(`Właściwość isBold kolumny "${name}" musi być typu boolean.`);
+    } else {
+      cleanIsBold = attr.isBold;
+    }
+
+    let cleanIsItalic = false;
+    if (attr.isItalic === undefined || attr.isItalic === null) {
+      cleanIsItalic = false;
+    } else if (typeof attr.isItalic !== 'boolean') {
+      throw new Error(`Właściwość isItalic kolumny "${name}" musi być typu boolean.`);
+    } else {
+      cleanIsItalic = attr.isItalic;
+    }
+
+    let cleanIsUnderline = false;
+    if (attr.isUnderline === undefined || attr.isUnderline === null) {
+      cleanIsUnderline = false;
+    } else if (typeof attr.isUnderline !== 'boolean') {
+      throw new Error(`Właściwość isUnderline kolumny "${name}" musi być typu boolean.`);
+    } else {
+      cleanIsUnderline = attr.isUnderline;
+    }
+
+    let cleanColumnWidth = 800;
+    if (attr.columnWidth === undefined || attr.columnWidth === null) {
+      cleanColumnWidth = 800;
+    } else if (typeof attr.columnWidth !== 'number' || !Number.isFinite(attr.columnWidth)) {
+      throw new Error(`Szerokość kolumny "${name}" musi być liczbą.`);
+    } else {
+      cleanColumnWidth = Math.min(4000, Math.max(200, Math.round(attr.columnWidth)));
     }
 
     cleanAttributes.push({
       name,
       type,
-      canBeEmpty: Boolean(attr.canBeEmpty),
+      canBeEmpty: cleanCanBeEmpty,
       enumValues: cleanEnumValues,
-      columnWidth: Math.min(4000, Math.max(200, Number(attr.columnWidth) || 800)),
-      isBold: Boolean(attr.isBold),
-      isItalic: Boolean(attr.isItalic),
-      isUnderline: Boolean(attr.isUnderline)
+      columnWidth: cleanColumnWidth,
+      isBold: cleanIsBold,
+      isItalic: cleanIsItalic,
+      isUnderline: cleanIsUnderline
     });
   }
 
@@ -1356,12 +1540,22 @@ function sanitizeProjectData(raw) {
     if (!p || typeof p !== 'object' || Array.isArray(p)) {
       throw new Error(`Wpis produktu #${i + 1} jest nieprawidłowy (wymagany obiekt).`);
     }
-    if (p.attributes !== undefined && p.attributes !== null && (typeof p.attributes !== 'object' || Array.isArray(p.attributes))) {
-      throw new Error(`Atrybuty produktu #${i + 1} muszą być obiektem.`);
+    // IC03-1: "traktować null/undefined w słownikach produktów jako błąd"
+    if (p.attributes === undefined || p.attributes === null || typeof p.attributes !== 'object' || Array.isArray(p.attributes)) {
+      throw new Error(`Słownik atrybutów produktu #${i + 1} nie może być pusty lub null.`);
+    }
+
+    let cleanId;
+    if (p.id === undefined || p.id === null) {
+      cleanId = i + 1;
+    } else if (typeof p.id !== 'number' || !Number.isInteger(p.id)) {
+      throw new Error(`Identyfikator produktu #${i + 1} musi być liczbą całkowitą.`);
+    } else {
+      cleanId = p.id;
     }
 
     const cleanAttrMap = Object.create(null);
-    const rawAttrs = p.attributes || {};
+    const rawAttrs = p.attributes;
 
     for (const key of Object.keys(rawAttrs)) {
       if (forbiddenKeys.includes(key.toLowerCase()) || key.length > 100) {
@@ -1374,11 +1568,14 @@ function sanitizeProjectData(raw) {
       if (typeof val === 'string' && val.length > 1000) {
         throw new Error(`Wartość kolumny "${key}" w wierszu ${i + 1} przekracza 1000 znaków.`);
       }
+      if (typeof val === 'number' && (!Number.isFinite(val) || Number.isNaN(val))) {
+        throw new Error(`Wartość kolumny "${key}" w wierszu ${i + 1} zawiera niepoprawną liczbę zmiennoprzecinkową.`);
+      }
       cleanAttrMap[key] = val;
     }
 
     cleanProducts.push({
-      id: Number(p.id) || (i + 1),
+      id: cleanId,
       attributes: cleanAttrMap
     });
   }
@@ -1454,4 +1651,16 @@ function showToast(message, type = 'success') {
       toast.remove();
     }, 200);
   }, 4000);
+}
+
+// Expose functions globally for test runner & recovery
+if (typeof window !== 'undefined') {
+  window.sanitizeProjectData = sanitizeProjectData;
+  window.loadLocalData = loadLocalData;
+  window.appState = appState;
+  window.downloadRecoveryBackup = downloadRecoveryBackup;
+  window.resetCorruptedCacheToDefault = resetCorruptedCacheToDefault;
+}
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { sanitizeProjectData, isNumericType };
 }

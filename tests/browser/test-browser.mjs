@@ -155,9 +155,23 @@ try {
     `Expected cache corruption toast, got: "${cacheToast}"`
   );
 
-  // Default attributes should be restored cleanly in localStorage
+  // Raw cache in localStorage must be preserved intact (not destroyed)
+  const rawAttrsBeforeReset = await page.evaluate(() => localStorage.getItem("inventory_attributes"));
+  assert(rawAttrsBeforeReset === JSON.stringify([null]), "Raw attributes must be preserved intact in localStorage");
+  const rawProdsBeforeReset = await page.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(rawProdsBeforeReset === "malformed-json-here{{", "Raw products must be preserved intact in localStorage");
+
+  // Recovery modal must be visible
+  await page.waitForSelector("#recovery-modal:not(.hide)");
+  const recoveryModalVisible = await page.locator("#recovery-modal").isVisible();
+  assert(recoveryModalVisible, "Recovery modal must be visible on corrupted cache");
+
+  // Explicit user reset via button restores default template
+  await page.click("#recovery-reset-btn");
+  await page.waitForSelector("#recovery-modal", { state: "hidden" });
+
   const recoveredAttrs = await page.evaluate(() => localStorage.getItem("inventory_attributes"));
-  assert(recoveredAttrs !== null, "Default attributes must be cleanly restored in localStorage on corruption");
+  assert(recoveredAttrs !== null && JSON.parse(recoveredAttrs).length >= 5, "Default attributes must be restored in localStorage after explicit reset");
   console.log("✓ Test 3 passed.");
 
   // -------------------------------------------------------------------------
@@ -211,6 +225,146 @@ try {
   const toastCount = await page.locator("#rate-limit-toast").count();
   assert(toastCount === 0, "Rate limit toast must disappear after countdown completes");
   console.log("✓ Test 6 passed.");
+
+  // -------------------------------------------------------------------------
+  // TEST 7: IC03-1 - Data Preservation & Strict Schema Sanitization Regressions
+  // -------------------------------------------------------------------------
+  console.log("Running Test 7: IC03-1 Data preservation & strict schema sanitization...");
+
+  // 7A: Isolated execution of schema checks:
+  const schemaResults = await page.evaluate(() => {
+    const results = {};
+
+    try {
+      window.sanitizeProjectData({
+        attributes: [{ name: "Col1", type: "UnknownType" }],
+        products: []
+      });
+      results.unknownType = "accepted";
+    } catch (e) {
+      results.unknownType = "rejected";
+    }
+
+    try {
+      window.sanitizeProjectData({
+        attributes: [{ name: "Col1", type: "String", isBold: "false" }],
+        products: []
+      });
+      results.isBoldStringFalse = "accepted";
+    } catch (e) {
+      results.isBoldStringFalse = "rejected";
+    }
+
+    try {
+      window.sanitizeProjectData({
+        attributes: [{ name: "Col1", type: "String" }],
+        products: [{ id: 1, attributes: null }]
+      });
+      results.nullProductDict = "accepted";
+    } catch (e) {
+      results.nullProductDict = "rejected";
+    }
+
+    try {
+      const synthetic5001Rows = Array.from({ length: 5001 }, (_, i) => ({
+        id: i + 1,
+        attributes: { Col1: "val" }
+      }));
+      window.sanitizeProjectData({
+        attributes: [{ name: "Col1", type: "String" }],
+        products: synthetic5001Rows
+      });
+      results.rows5001 = "accepted";
+    } catch (e) {
+      results.rows5001 = "rejected";
+    }
+
+    // Missing legacy fields get compatible defaults
+    try {
+      const legacyClean = window.sanitizeProjectData({
+        attributes: [{ name: "Col1" }],
+        products: [{ id: 1, attributes: { Col1: "val" } }]
+      });
+      results.legacyType = legacyClean.attributes[0].type;
+      results.legacyWidth = legacyClean.attributes[0].columnWidth;
+      results.legacyCanBeEmpty = legacyClean.attributes[0].canBeEmpty;
+      results.legacyIsBold = legacyClean.attributes[0].isBold;
+    } catch (e) {
+      results.legacy = "error: " + e.message;
+    }
+
+    return results;
+  });
+
+  assert(schemaResults.unknownType === "rejected", "Unknown attribute type must be rejected");
+  assert(schemaResults.isBoldStringFalse === "rejected", "Boolean string 'false' must be rejected");
+  assert(schemaResults.nullProductDict === "rejected", "Null product attributes dictionary must be rejected");
+  assert(schemaResults.rows5001 === "rejected", "5001 rows must exceed row limit and be rejected");
+  assert(schemaResults.legacyType === "String", "Missing legacy type must default to String");
+  assert(schemaResults.legacyWidth === 800, "Missing legacy columnWidth must default to 800");
+  assert(schemaResults.legacyCanBeEmpty === true, "Missing legacy canBeEmpty must default to true");
+  assert(schemaResults.legacyIsBold === false, "Missing legacy isBold must default to false");
+
+  // 7B: Synthetic 5001-row cache in localStorage must NOT be overwritten with []
+  console.log("Subtest 7B: Synthetic 5001-row cache in localStorage must not be overwritten with []...");
+  const synthetic5001Data = JSON.stringify(Array.from({ length: 5001 }, (_, i) => ({
+    id: i + 1,
+    attributes: { Col1: "val" }
+  })));
+
+  await page.evaluate((data) => {
+    localStorage.setItem("inventory_attributes", JSON.stringify([{ name: "Col1", type: "String" }]));
+    localStorage.setItem("inventory_products", data);
+  }, synthetic5001Data);
+
+  await page.reload({ waitUntil: "networkidle" });
+
+  const raw5001AfterReload = await page.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(raw5001AfterReload === synthetic5001Data, "Synthetic 5001-row cache must be preserved intact in localStorage across reload");
+  assert(raw5001AfterReload !== "[]", "Storage must NOT be overwritten with empty products array on over-limit data");
+
+  // Recovery modal must be visible offering raw export
+  await page.waitForSelector("#recovery-modal:not(.hide)");
+  const recoveryModal5001 = await page.locator("#recovery-modal").isVisible();
+  assert(recoveryModal5001, "Recovery modal must be shown on over-limit data");
+
+  // Dismiss recovery modal in-memory without touching storage
+  await page.click("#recovery-dismiss-btn");
+  await page.waitForSelector("#recovery-modal", { state: "hidden" });
+  const rawAfterDismiss = await page.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(rawAfterDismiss === synthetic5001Data, "Storage must remain untouched after in-memory dismissal");
+
+  // 7C: File-input import workflow rejects invalid files without modifying storage
+  console.log("Subtest 7C: Import via file-input workflow rejects invalid schema and preserves storage...");
+  // Set known valid state in localStorage first
+  await page.evaluate(() => {
+    localStorage.setItem("inventory_attributes", JSON.stringify([{ name: "SavedCol", type: "String" }]));
+    localStorage.setItem("inventory_products", JSON.stringify([{ id: 1, attributes: { SavedCol: "PreservedValue" } }]));
+  });
+  await page.reload({ waitUntil: "networkidle" });
+
+  // Trigger import with malformed / invalid schema JSON
+  const invalidJsonFileContent = JSON.stringify({
+    attributes: [{ name: "BadCol", type: "INVALID_ENUM_OR_TYPE" }],
+    products: []
+  });
+
+  await page.setInputFiles("#import-json-file", {
+    name: "corrupted_import.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(invalidJsonFileContent)
+  });
+
+  // Verify toast error is shown
+  await page.waitForSelector(".toast-error");
+  const importToast = await page.locator(".toast-error .toast-message").first().textContent();
+  assert(importToast.includes("Błąd") || importToast.includes("Error") || importToast.includes("nieprawidłowy"), `Expected error toast on invalid import, got: ${importToast}`);
+
+  // Verify localStorage is still the preserved valid state
+  const preservedProds = await page.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(preservedProds.includes("PreservedValue"), "Failed file import must not overwrite or modify existing stored project");
+
+  console.log("✓ Test 7 passed.");
 
   console.log("\n=========================================");
   console.log("All browser end-to-end tests passed successfully!");
