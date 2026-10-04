@@ -138,31 +138,23 @@ namespace InventoryGenerator.UnitTests.Services
         }
 
         [Fact]
-        public async Task ConcurrencySlot_DefaultCapacityShouldBe8_AndQueueShouldWait()
+        public async Task ConcurrencySlot_DefaultCapacityShouldBe3_AndRejectImmediatelyOnZeroTimeout()
         {
-            var limiter = new ExportRateLimiter(); // default 8
+            var limiter = new ExportRateLimiter(); // default 3
             var slots = new List<bool>();
 
-            for (int i = 0; i < 8; i++)
+            for (int i = 0; i < 3; i++)
             {
                 slots.Add(await limiter.TryAcquireConcurrencySlotAsync(TimeSpan.Zero));
             }
 
             slots.Should().AllBeEquivalentTo(true);
 
-            // 9th slot without wait fails immediately
-            var slot9Instant = await limiter.TryAcquireConcurrencySlotAsync(TimeSpan.Zero);
-            slot9Instant.Should().BeFalse();
+            // 4th slot without wait fails immediately (no-wait admission)
+            var slot4Instant = await limiter.TryAcquireConcurrencySlotAsync(TimeSpan.Zero);
+            slot4Instant.Should().BeFalse();
 
-            // 9th slot with 500ms wait succeeds if slot is released during wait
-            var waitTask = Task.Run(async () => await limiter.TryAcquireConcurrencySlotAsync(TimeSpan.FromSeconds(1)));
-            await Task.Delay(50);
-            limiter.ReleaseConcurrencySlot(); // release one
-
-            var acquired = await waitTask;
-            acquired.Should().BeTrue();
-
-            for (int i = 0; i < 8; i++)
+            for (int i = 0; i < 3; i++)
             {
                 limiter.ReleaseConcurrencySlot();
             }

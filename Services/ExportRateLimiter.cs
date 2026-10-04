@@ -28,7 +28,7 @@ namespace InventoryGenerator.Api.Services
         private DateTime _lastCleanup;
 
         public ExportRateLimiter(
-            int maxConcurrency = 8,
+            int maxConcurrency = 3,
             double sharedCapacity = 10,
             double sharedRefillPerSecond = 10.0 / 60.0,
             double docxCapacity = 2,
