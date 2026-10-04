@@ -98,6 +98,7 @@ const elements = {
   
   // Modal Preview Elements
   previewModal: document.getElementById('preview-modal'),
+  documentPreviewContainer: document.getElementById('document-preview-container'),
   closeModalBtn: document.getElementById('close-modal-btn'),
   modalCloseBtn: document.getElementById('modal-close-btn'),
   modalDownloadBtn: document.getElementById('modal-download-btn'),

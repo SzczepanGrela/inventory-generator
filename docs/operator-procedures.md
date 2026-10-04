@@ -14,7 +14,7 @@ Przed wdrożeniem lub w trakcie weryfikacji przedwdrożeniowej operator weryfiku
 1. **Niezgodność skrótu (Digest Mismatch)**: Obraz nie jest przypięty unikalnym skrótem `sha256:...`.
 2. **Brak lub negatywna atestacja SLSA/Provenance**: Atestacja GitHub Actions nie weryfikuje się pomyślnie.
 3. **Dryf konfiguracji Coolify (Configuration Drift)**: Rzeczywista konfiguracja zasobu w Coolify różni się od kontraktu `infra/coolify-production.json` (np. limit RAM > 512 MiB, CPU > 1.0, porty, zmienne środowiskowe).
-4. **Podatności wysokiego ryzyka**: Skaner Trivy wykrywa nienaprawione podatności HIGH lub CRITICAL w warstwach aplikacji.
+4. **Podatności wysokiego ryzyka**: Skaner Trivy (z flagą `ignore-unfixed: true` skonfigurowaną w CI) wykrywa podatności wysokiego lub krytycznego ryzyka z dostępną poprawką (*fixable HIGH/CRITICAL*).
 
 ### Procedura weryfikacji kandydata przez operatora:
 
@@ -42,7 +42,7 @@ W przypadku wykrycia niezgodności operator odrzuca wdrożenie w GitHub Actions 
 
 ## 2. Wycofanie po Nieudanych Testach Dymnych (Failed-Smoke Rollback)
 
-Mechanizm wycofania zapewnia natychmiastowe przywrócenie poprzedniej znanej, stabilnej wersji w przypadku niepowodzenia wdrożenia.
+Mechanizm wycofania zapewnia przywrócenie poprzedniej znanej, stabilnej wersji w przypadku niepowodzenia wdrożenia. Rollback nie jest procesem natychmiastowym: wymaga zatrzymania wadliwego kontenera, uruchomienia poprzedniego obrazu, weryfikacji punktu zdrowia w ograniczonym oknie czasowym (do 60s) oraz min. 15-sekundowego okna obserwacyjnego (*soak period*).
 
 ### 2.1. Automatyczny Rollback w `coolify_release.py`
 Wbudowany skrypt wdrożeniowy automatycznie wycofuje zmiany w przypadku:
@@ -60,7 +60,7 @@ Jeżeli automatyczny proces zawiedzie lub wymagane jest natychmiastowe wycofanie
 # Opcja A: Wycofanie przez ponowne uruchomienie workflow GitHub Actions ze znanym stabilnym SHA
 gh workflow run deploy.yml \
   --ref main \
-  -f target_digest="sha256:<PREVIOUS_STABLE_DIGEST>" \
+  -f digest="sha256:<PREVIOUS_STABLE_DIGEST>" \
   -f expected_revision="<PREVIOUS_STABLE_COMMIT_SHA>"
 
 # Opcja B: Bezpośrednie przywrócenie w Coolify API w sytuacji awarii CI/CD
@@ -92,8 +92,8 @@ print("Manualny rollback zakończony pomyślnie.")
 # Sprawdzenie publicznego endpointu zdrowia
 curl -s https://inventory-generator.grela.dev/api/health | jq .
 
-# Uruchomienie bazowych testów dymnych
-python3 -m infra.smokecheck https://inventory-generator.grela.dev <PREVIOUS_STABLE_COMMIT_SHA>
+# Uruchomienie bazowych testów dymnych (z flagami nazwanymi)
+python3 -m infra.smokecheck --base-url https://inventory-generator.grela.dev --expected-revision <PREVIOUS_STABLE_COMMIT_SHA>
 ```
 
 ---
@@ -103,9 +103,25 @@ python3 -m infra.smokecheck https://inventory-generator.grela.dev <PREVIOUS_STAB
 Deklaracje w plikach konfiguracyjnych muszą odpowiadać rzeczywistym parametrom kontenera uruchomionego na serwerze VPS. Poniższe polecenia weryfikują stan faktyczny (*effective state*):
 
 ### 3.1. Identyfikacja aktywnego kontenera:
+Podczas standardowej pracy w Coolify działa dokładnie jeden kontener aplikacji. W trakcie procedury rolling update mogą chwilowo istnieć 2 kontenery (nakładanie instancji). Poniższa procedura jednoznacznie identyfikuje instancję i zapobiega niejednoznaczności:
+
 ```bash
-CONTAINER_ID=$(docker ps --filter "name=inventory-generator" --format "{{.ID}}")
-echo "Aktywny kontener: $CONTAINER_ID"
+# Wyszukanie aktywnych kontenerów zasobu w Coolify
+CONTAINERS=$(docker ps -q --filter "label=coolify.applicationId=<APPLICATION_UUID>" --filter "status=running")
+CONTAINER_COUNT=$(echo "$CONTAINERS" | grep -v '^$' | wc -l)
+
+if [ "$CONTAINER_COUNT" -eq 1 ]; then
+  CONTAINER_ID="$CONTAINERS"
+  echo "Aktywny pojedynczy kontener produkcyjny: $CONTAINER_ID"
+elif [ "$CONTAINER_COUNT" -gt 1 ]; then
+  echo "Wykryto $CONTAINER_COUNT aktywnych kontenerów (rolling overlap lub dryf stanu):"
+  docker ps --filter "label=coolify.applicationId=<APPLICATION_UUID>" --format "table {{.ID}}\t{{.Names}}\t{{.CreatedAt}}\t{{.Status}}"
+  echo "Wybierz docelowy CONTAINER_ID ręcznie przed wykonaniem inspekcji."
+  exit 1
+else
+  echo "BŁĄD: Brak uruchomionych kontenerów dla aplikacji <APPLICATION_UUID>!" >&2
+  exit 1
+fi
 ```
 
 ### 3.2. Weryfikacja ograniczeń zasobów (Cgroups limits):
@@ -146,9 +162,9 @@ curl -s https://inventory-generator.grela.dev/api/health
 
 ## 4. Protokół Pomiaru Nakładania się Instancji (Measured Rolling Overlap Protocol)
 
-Zgodnie z `docs/decisions/2026-10-03-inventory-process-local-limits.md`, Inventory Generator korzysta z lokalnych dla procesu liczników rate limitera (token bucket: pojemność 10 jednostek kosztu, uzupełnianie 1/6s) oraz semafora współbieżności DOCX (maksymalnie 3 równoległe sloty). 
+Zgodnie z `docs/decisions/2026-10-03-inventory-process-local-limits.md`, Inventory Generator korzysta z lokalnych dla procesu liczników rate limitera (token bucket: pojemność 10 jednostek kosztu, uzupełnianie 1/6s) oraz semafora współbieżności eksportu (maksymalnie 3 równoległe sloty obejmujące wszystkie formaty: DOCX, CSV i HTML, z natychmiastowym odrzuceniem no-wait HTTP 429 Retry-After: 1). 
 
-Podczas aktualizacji typu *rolling update* przez krótki czas (zwykle 10–30 sekund) mogą działać równolegle dwa kontenery (stary i nowy). Oznacza to potencjalne chwilowe podwojenie dopuszczalnego obciążenia procesora i pamięci.
+Podczas aktualizacji typu *rolling update* przez krótki czas (zwykle 10–30 sekund) mogą działać równolegle dwa kontenery (stary i nowy). Oznacza to potencjalne chwilowe podwojenie dopuszczalnego obciążenia procesora i pamięci (do 6 slotów i podwójnej sterty).
 
 > [!WARNING]
 > **ZAKAZ TESTÓW BEZ UZGODNIONEGO OKNA OPERACYJNEGO**
@@ -169,16 +185,16 @@ vmstat 1
 # Terminal 2: Wykorzystanie CPU i pamięci przez kontenery Docker
 docker stats --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}"
 
-# Terminal 3: Ciągły test dymny sąsiadującej aplikacji (TTT)
+# Terminal 3: Ciągły test dymny sąsiadującej aplikacji TicTacToe (tictactoe.grela.dev)
 while true; do
-  STATUS=$(curl -o /dev/null -s -w "%{http_code} %{time_total}s\n" https://ttt.grela.dev)
+  STATUS=$(curl -o /dev/null -s -w "%{http_code} %{time_total}s\n" https://tictactoe.grela.dev)
   echo "$(date -u +%T) TTT status: $STATUS"
   sleep 1
 done
 ```
 
 ### 4.3. Scenariusz testowy:
-1. Wygenerowanie legalnego syntetycznego obciążenia referencyjnego dla Inventory (równoległe żądania CSV, HTML i DOCX w ramach limitów: max 3 współbieżne DOCX).
+1. Wygenerowanie legalnego syntetycznego obciążenia referencyjnego dla Inventory (żądania CSV, HTML i DOCX w ramach limitów: max 3 współbieżne sloty bez oczekiwania).
 2. Wywołanie przeładowania kontenera / wdrożenia nowego wydania w Coolify.
 3. Pomiar parametrów podczas nakładania się starego i nowego kontenera:
    - Czas trwania nakładania się (rolling overlap duration w sekundach).
@@ -188,10 +204,10 @@ done
 ### 4.4. Ścisłe Progi Zatrzymania (Stop Thresholds / Abort Criteria):
 Test musi zostać **natychmiast przerwany**, a procedura rollbacku uruchomiona, jeżeli:
 - **Dostępna pamięć RAM hosta spadnie poniżej 1000 MiB** (`free -m | awk '/Mem:/ {print $7}' < 1000`).
-- **Suma obciążenia CPU (load average) przekroczy 3.5** lub utrzyma się na poziomie > 85% przez ponad 15 sekund.
+- **Wskaźnik obciążenia systemu (load average) przekroczy 3.5** (nasycenie kolejki zadań systemowych na maszynie wielordzeniowej) LUB rzeczywiste sumaryczne wykorzystanie CPU hosta (`vmstat` / `docker stats`) przekroczy 85% przez ponad 15 sekund.
 - **Opóźnienie odpowiedzi sąsiedniej aplikacji TTT przekroczy 500 ms** lub TTT zwróci jakikolwiek kod błędu HTTP 5xx.
-- **Kontener Inventory zostanie zabity przez OOM Killer** (kod wyjścia 137 w `docker ps -a` lub wpis w `dmesg`).
+- **Wystąpienie zdarzenia OOM Killer na kontenerze aplikacji**. Sam kod wyjścia 137 (SIGKILL) nie jest jednoznacznym dowodem OOM (może oznaczać manualne zatrzymanie lub timeout). Operator weryfikuje faktyczny OOM poprzez sprawdzenie: `docker inspect <CONTAINER_ID> --format '{{.State.OOMKilled}}'` (oczekiwane `true`), liczniki `oom_kill` w cgroup v2 (`/sys/fs/cgroup/.../memory.events`) lub wpisy w logach jądra `dmesg -T | grep -i oom`.
 - Jakiekolwiek żądanie użytkownika w oknie przełączenia zakończy się nieoczekiwanym błędem 502/503/504 trwającym dłużej niż 3 kolejne próby.
 
 ### 4.5. Akcja awaryjna przy przekroczeniu progu:
-W przypadku naruszenia progu operator natychmiast zatrzymuje test generowania ruchu i wykonuje manualne zatrzymanie kontenera kandydata lub rollback według sekcji 2.2.
+W przypadku naruszenia progu operator natychmiast zatrzymuje generowanie ruchu testowego i wykonuje manualny rollback według sekcji 2.2.

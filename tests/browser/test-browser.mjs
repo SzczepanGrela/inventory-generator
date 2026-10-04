@@ -58,6 +58,10 @@ try {
   await waitForServer();
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  page.on("pageerror", (err) => console.error("PAGE ERROR:", err));
+  page.on("console", (msg) => {
+    if (msg.type() === "error") console.error("PAGE CONSOLE ERROR:", msg.text());
+  });
 
   // -------------------------------------------------------------------------
   // TEST 1: Initial load, default attributes, and Local-First persistence
@@ -328,6 +332,13 @@ try {
   const recoveryModal5001 = await page.locator("#recovery-modal").isVisible();
   assert(recoveryModal5001, "Recovery modal must be shown on over-limit data");
 
+  // Test raw JSON recovery download
+  const [recDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    page.click("#recovery-download-btn")
+  ]);
+  assert(recDownload.suggestedFilename().includes("inventory_recovery_backup_"), "Recovery download filename must indicate raw backup");
+
   // Dismiss recovery modal in-memory without touching storage
   await page.click("#recovery-dismiss-btn");
   await page.waitForSelector("#recovery-modal", { state: "hidden" });
@@ -364,7 +375,238 @@ try {
   const preservedProds = await page.evaluate(() => localStorage.getItem("inventory_products"));
   assert(preservedProds.includes("PreservedValue"), "Failed file import must not overwrite or modify existing stored project");
 
+  // Verify valid JSON file import updates storage and UI
+  const validJsonFileContent = JSON.stringify({
+    attributes: [{ name: "ImportedCol", type: "String", columnWidth: 1000, canBeEmpty: true, isBold: false }],
+    products: [{ id: 101, attributes: { ImportedCol: "ImportedItemValue" } }]
+  });
+
+  await page.setInputFiles("#import-json-file", {
+    name: "valid_import.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(validJsonFileContent)
+  });
+
+  await page.waitForTimeout(300);
+  const validStored = await page.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(validStored.includes("ImportedItemValue"), "Valid JSON import must successfully update stored products");
+  const tableWithImport = await page.textContent("#inventory-tbody");
+  assert(tableWithImport.includes("ImportedItemValue"), "Valid JSON import must update table DOM");
+
   console.log("✓ Test 7 passed.");
+
+  // -------------------------------------------------------------------------
+  // TEST 8: IC03-5 Export Downloads (CSV, DOCX, HTML, Project JSON)
+  // -------------------------------------------------------------------------
+  console.log("Running Test 8: IC03-5 Export downloads (CSV, DOCX, HTML, JSON)...");
+
+  // 8A: Export CSV download
+  await page.click("#export-dropdown-btn");
+  await page.click("#export-csv-btn");
+  await page.waitForSelector("#preview-modal:not(.hide)");
+
+  const [csvDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    page.click("#modal-download-btn")
+  ]);
+  assert(csvDownload.suggestedFilename().endsWith(".csv"), `Expected .csv extension, got: ${csvDownload.suggestedFilename()}`);
+  const csvStream = await csvDownload.createReadStream();
+  const csvChunks = [];
+  for await (const chunk of csvStream) {
+    csvChunks.push(chunk);
+  }
+  const csvText = Buffer.concat(csvChunks).toString("utf-8");
+  assert(csvText.includes("ImportedCol") && csvText.includes("ImportedItemValue"), "CSV export must contain exported column and row data");
+  await page.waitForSelector("#preview-modal", { state: "hidden" });
+
+  // 8B: Export DOCX download
+  await page.click("#export-dropdown-btn");
+  await page.click("#export-docx-btn");
+  await page.waitForSelector("#preview-modal:not(.hide)");
+
+  const [docxDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    page.click("#modal-download-btn")
+  ]);
+  assert(docxDownload.suggestedFilename().endsWith(".docx"), `Expected .docx extension, got: ${docxDownload.suggestedFilename()}`);
+  const docxStream = await docxDownload.createReadStream();
+  let docxBytes = 0;
+  for await (const chunk of docxStream) {
+    docxBytes += chunk.length;
+  }
+  assert(docxBytes > 500, `DOCX payload must be non-empty (got ${docxBytes} bytes)`);
+  await page.waitForSelector("#preview-modal", { state: "hidden" });
+
+  // 8C: Export HTML download
+  await page.click("#export-dropdown-btn");
+  await page.click("#export-html-btn");
+  await page.waitForSelector("#preview-modal:not(.hide)");
+
+  const [htmlDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    page.click("#modal-download-btn")
+  ]);
+  assert(htmlDownload.suggestedFilename().endsWith(".html"), `Expected .html extension, got: ${htmlDownload.suggestedFilename()}`);
+  const htmlStream = await htmlDownload.createReadStream();
+  const htmlChunks = [];
+  for await (const chunk of htmlStream) {
+    htmlChunks.push(chunk);
+  }
+  const htmlText = Buffer.concat(htmlChunks).toString("utf-8");
+  assert(htmlText.includes("ImportedCol") && htmlText.includes("ImportedItemValue"), "HTML export must contain table headers and rows");
+  await page.waitForSelector("#preview-modal", { state: "hidden" });
+
+  // 8D: Project JSON export
+  const [jsonExport] = await Promise.all([
+    page.waitForEvent("download"),
+    page.click("#export-json-btn")
+  ]);
+  assert(jsonExport.suggestedFilename().endsWith(".json"), `Expected .json extension, got: ${jsonExport.suggestedFilename()}`);
+  const jsonStream = await jsonExport.createReadStream();
+  const jsonChunks = [];
+  for await (const chunk of jsonStream) {
+    jsonChunks.push(chunk);
+  }
+  const jsonParsed = JSON.parse(Buffer.concat(jsonChunks).toString("utf-8"));
+  assert(jsonParsed.attributes && jsonParsed.products, "Exported JSON must contain attributes and products");
+  assert(jsonParsed.products[0].attributes.ImportedCol === "ImportedItemValue", "Exported JSON must contain valid project row values");
+  console.log("✓ Test 8 passed.");
+
+  // -------------------------------------------------------------------------
+  // TEST 9: IC03-5 Responsive Mobile Viewport Layout (375x667)
+  // -------------------------------------------------------------------------
+  console.log("Running Test 9: IC03-5 Responsive mobile viewport layout (375x667)...");
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.waitForTimeout(200);
+
+  // Check that .hide-mobile text elements are hidden on mobile
+  const isExportLabelVisible = await page.locator("#export-dropdown-btn .hide-mobile").isVisible();
+  assert(!isExportLabelVisible, ".hide-mobile text must not be visible on 375px mobile viewport");
+
+  // Check that page content does not cause horizontal body overflow
+  const hasNoDocOverflow = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+  assert(hasNoDocOverflow, "Mobile layout must fit within 375px viewport without horizontal document overflow");
+
+  // Restore desktop viewport
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.waitForTimeout(200);
+  console.log("✓ Test 9 passed.");
+
+  // -------------------------------------------------------------------------
+  // TEST 10: IC03-5 Modal Tab Focus Trapping and Focus Restoration
+  // -------------------------------------------------------------------------
+  console.log("Running Test 10: IC03-5 Modal Tab focus trapping and focus restoration...");
+  await page.focus("#settings-modal-trigger-btn");
+  await page.keyboard.press("Enter");
+  await page.waitForSelector("#settings-modal:not(.hide)");
+
+  // Verify initial focus is inside modal
+  const initialInside = await page.evaluate(() => document.querySelector("#settings-modal").contains(document.activeElement));
+  assert(initialInside, "Initial focus upon opening modal must be inside #settings-modal");
+
+  // Focus the last interactive element directly and test forward Tab wrapping
+  await page.evaluate(() => {
+    const modal = document.querySelector("#settings-modal");
+    const focusable = Array.from(modal.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter((el) => el.offsetParent !== null);
+    focusable[focusable.length - 1].focus();
+  });
+
+  await page.keyboard.press("Tab");
+  const isFirstActive = await page.evaluate(() => {
+    const modal = document.querySelector("#settings-modal");
+    const focusable = Array.from(modal.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter((el) => el.offsetParent !== null);
+    return document.activeElement === focusable[0];
+  });
+  assert(isFirstActive, "Tabbing forward from last element must trap focus back to first element");
+
+  // From first element, test backward Shift+Tab wrapping
+  await page.keyboard.press("Shift+Tab");
+  const isLastActive = await page.evaluate(() => {
+    const modal = document.querySelector("#settings-modal");
+    const focusable = Array.from(modal.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter((el) => el.offsetParent !== null);
+    return document.activeElement === focusable[focusable.length - 1];
+  });
+  assert(isLastActive, "Shift+Tabbing backward from first element must trap focus to last element");
+
+  // Close modal via Escape and verify focus restoration to trigger button
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("#settings-modal", { state: "hidden" });
+  const restoredId = await page.evaluate(() => document.activeElement?.id);
+  assert(restoredId === "settings-modal-trigger-btn", `Focus must be restored to trigger button (#settings-modal-trigger-btn), got #${restoredId}`);
+  console.log("✓ Test 10 passed.");
+
+  // -------------------------------------------------------------------------
+  // TEST 11: IC03-5 HTTP 429 Button Locking and Automatic Cooldown Recovery
+  // -------------------------------------------------------------------------
+  console.log("Running Test 11: IC03-5 HTTP 429 button locking and cooldown recovery...");
+  await page.route("**/api/export/**", async (route) => {
+    await route.fulfill({
+      status: 429,
+      headers: {
+        "Retry-After": "2",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ detail: "Zbyt wiele żądań eksportu." })
+    });
+  });
+
+  await page.click("#export-dropdown-btn");
+  await page.click("#export-csv-btn");
+  await page.waitForSelector("#preview-modal:not(.hide)");
+
+  // Click download triggering 429 response
+  await page.click("#modal-download-btn");
+
+  // Verify rate limit toast is shown and download button is locked
+  await page.waitForSelector("#rate-limit-toast");
+  const isLocked = await page.locator("#modal-download-btn").isDisabled();
+  assert(isLocked, "Download button must be locked (disabled) when 429 is received");
+
+  // Wait 2.5s for cooldown to complete
+  await page.waitForTimeout(2500);
+  const toastRemaining = await page.locator("#rate-limit-toast").count();
+  assert(toastRemaining === 0, "Rate limit toast must disappear after countdown completes");
+  const isUnlocked = await page.locator("#modal-download-btn").isEnabled();
+  assert(isUnlocked, "Download button must be re-enabled after cooldown period");
+
+  await page.unroute("**/api/export/**");
+  await page.click("#modal-close-btn");
+  await page.waitForSelector("#preview-modal", { state: "hidden" });
+  console.log("✓ Test 11 passed.");
+
+  // -------------------------------------------------------------------------
+  // TEST 12: IC03-5 Network Error Resilience
+  // -------------------------------------------------------------------------
+  console.log("Running Test 12: IC03-5 Network error resilience...");
+  await page.route("**/api/export/**", async (route) => {
+    await route.abort("failed");
+  });
+
+  await page.click("#export-dropdown-btn");
+  await page.click("#export-csv-btn");
+  await page.waitForSelector("#preview-modal:not(.hide)");
+
+  await page.click("#modal-download-btn");
+
+  // Verify error toast appears
+  await page.waitForSelector(".toast-error");
+  const errToastText = await page.locator(".toast-error .toast-message").last().textContent();
+  assert(errToastText.includes("Export error:"), `Expected export error toast, got: "${errToastText}"`);
+
+  // Verify application state and localStorage remain intact
+  const prodsAfterNetErr = await page.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(prodsAfterNetErr !== null && prodsAfterNetErr.includes("ImportedItemValue"), "Stored products must remain intact after network error");
+
+  await page.unroute("**/api/export/**");
+  await page.click("#modal-close-btn");
+  await page.waitForSelector("#preview-modal", { state: "hidden" });
+  console.log("✓ Test 12 passed.");
 
   console.log("\n=========================================");
   console.log("All browser end-to-end tests passed successfully!");
