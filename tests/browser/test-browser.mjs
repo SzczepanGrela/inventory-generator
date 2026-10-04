@@ -500,8 +500,9 @@ try {
   await page.keyboard.press("Enter");
   await page.waitForSelector("#settings-modal:not(.hide)");
 
-  // Verify initial focus is inside modal
-  const initialInside = await page.evaluate(() => document.querySelector("#settings-modal").contains(document.activeElement));
+  // Verify initial focus is inside modal (await animation frame focus shift)
+  await page.waitForFunction(() => document.querySelector("#settings-modal")?.contains(document.activeElement));
+  const initialInside = await page.evaluate(() => document.querySelector("#settings-modal")?.contains(document.activeElement));
   assert(initialInside, "Initial focus upon opening modal must be inside #settings-modal");
 
   // Focus the last interactive element directly and test forward Tab wrapping
@@ -537,6 +538,7 @@ try {
   // Close modal via Escape and verify focus restoration to trigger button
   await page.keyboard.press("Escape");
   await page.waitForSelector("#settings-modal", { state: "hidden" });
+  await page.waitForFunction(() => document.activeElement?.id === "settings-modal-trigger-btn");
   const restoredId = await page.evaluate(() => document.activeElement?.id);
   assert(restoredId === "settings-modal-trigger-btn", `Focus must be restored to trigger button (#settings-modal-trigger-btn), got #${restoredId}`);
   console.log("✓ Test 10 passed.");
