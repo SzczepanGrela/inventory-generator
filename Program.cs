@@ -255,12 +255,12 @@ app.MapPost("/api/export/{format}", async (
         return Results.BadRequest(new { error = validationError });
     }
 
-    // Concurrency limiting: server overload protection (waits up to 5s in queue for an active slot)
-    bool slotAcquired = await rateLimiter.TryAcquireConcurrencySlotAsync(TimeSpan.FromSeconds(5), context.RequestAborted);
+    // Concurrency limiting: server overload protection (3 slots, immediate no-wait admission)
+    bool slotAcquired = await rateLimiter.TryAcquireConcurrencySlotAsync(TimeSpan.Zero);
     if (!slotAcquired)
     {
         logger.LogWarning("Export concurrency limit reached for client {ClientIp} on format {Format}", clientIp, normalizedFormat);
-        context.Response.Headers.RetryAfter = "5";
+        context.Response.Headers.RetryAfter = "1";
         return Results.Problem(
             statusCode: StatusCodes.Status429TooManyRequests,
             detail: "Server is busy processing other export requests. Please try again shortly.");

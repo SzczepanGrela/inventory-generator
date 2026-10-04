@@ -42,13 +42,13 @@ The application state (products, configuration, translations) is fully maintaine
   - **Weighted Cost Unit Model**: Shared budget of 10 cost units per minute per client:
     - CSV & HTML exports cost **1 cost unit**.
     - DOCX export costs **2 cost units** + consumes from a dedicated burst bucket (capacity 2 tokens, refill 5/min).
-  - **Concurrency limiter semaphore & request queue**: Up to 8 concurrent active document generations with up to 5-second in-memory queue wait to handle traffic spikes safely without overloading CPU or memory.
-  - Returns `429 Too Many Requests` with standard `Retry-After` header when queue wait times out; frontend displays an interactive countdown toast during cooldown.
+  - **Concurrency limiter semaphore**: Maximum 3 concurrent active document generations across all export formats to protect single vCPU container performance and memory (immediate no-wait admission returning `429 Too Many Requests` with `Retry-After: 1` header).
+  - Returns `429 Too Many Requests` with standard `Retry-After` header when concurrency is saturated; frontend displays an interactive countdown toast during cooldown.
 - **Export Performance & Resource Profile (Max Capacity 50,000 cells)**:
-  - **CSV (50 cols x 1,000 rows)**: ~4 ms execution, ~381 KB output, ~4 MB RAM.
-  - **HTML (50 cols x 1,000 rows)**: ~14 ms execution, ~1.93 MB output, ~15 MB RAM.
-  - **DOCX (50 cols x 1,000 rows - OpenXmlWriter streaming)**: ~490 ms execution, ~107 KB output, ~13 MB RAM (89% memory reduction via streaming vs legacy DOM).
-  - **8 Concurrent Streamed DOCX (400,000 total cells)**: ~585 ms execution, peak process working set ~297 MB (safely below 512 MB container limit).
+  - **CSV (50 cols x 1,000 rows)**: ~4 ms execution, ~381 KB output, ~4 MB live managed heap delta.
+  - **HTML (50 cols x 1,000 rows)**: ~15 ms execution, ~1.93 MB output, ~15 MB live managed heap delta.
+  - **DOCX (50 cols x 1,000 rows - OpenXmlWriter streaming)**: ~160–490 ms execution, ~107 KB output, ~13–28 MB live managed heap delta (streaming row-by-row reduces live DOM object retention vs legacy full-tree DOM).
+  - Note: Single-process function benchmarks measure live managed heap delta and post-completion working set; actual peak memory in production depends on concurrent request body buffering and container cgroups GC pacing.
 - **Export Injection Defense**:
   - **CSV Formula Injection**: Leading formula characters (`=`, `+`, `-`, `@`, `\t`, `\r`) are escaped with a single quote prefix while preserving valid negative/positive numbers.
   - **HTML Encoding**: All exported headers and table values are strictly HTML-encoded.
@@ -190,13 +190,13 @@ Stan aplikacji (produkty, konfiguracja, tłumaczenia) jest w pełni utrzymywany 
   - **Model Jednostek Kosztu (Cost Units)**: Wspólny budżet 10 jednostek kosztu na minutę per klient:
     - Eksport CSV i HTML kosztuje **1 jednostkę kosztu**.
     - Eksport DOCX kosztuje **2 jednostki kosztu** + pobiera token z dedykowanej puli burst (pojemność 2 tokeny, uzupełnianie 5/min).
-  - **Semafor współbieżności i kolejkowanie żądań**: Do 8 równoczesnych aktywnych generacji dokumentów z kolejkowaniem w pamięci do 5 sekund, co pozwala na bezpieczną obsługę nagłych skoków ruchu bez dławienia CPU czy ryzyka OOM.
-  - Odpowiedź `429 Too Many Requests` z nagłówkiem `Retry-After: 5` w przypadku przekroczenia czasu oczekiwania w kolejce; interfejs użytkownika prezentuje czytelny toast z animowanym odliczaniem czasu.
+  - **Semafor współbieżności**: maksymalnie 3 równoczesne aktywne generacje dokumentów dla wszystkich formatów, chroniące procesor i pamięć RAM kontenera 1 vCPU (natychmiastowa odmowa wstępu `no-wait` zwracająca `429 Too Many Requests` z nagłówkiem `Retry-After: 1`).
+  - Odpowiedź `429 Too Many Requests` z nagłówkiem `Retry-After: 1`; interfejs użytkownika prezentuje czytelny toast z animowanym odliczaniem czasu.
 - **Profil Wydajnościowy i Zużycie Zasobów (Maksymalna Pojemność 50 000 komórek)**:
-  - **CSV (50 kolumn x 1 000 wierszy)**: czas ~4 ms, rozmiar ~381 KB, pamięć RAM ~4 MB.
-  - **HTML (50 kolumn x 1 000 wierszy)**: czas ~14 ms, rozmiar ~1,93 MB, pamięć RAM ~15 MB.
-  - **DOCX (50 kolumn x 1 000 wierszy - strumieniowanie OpenXmlWriter)**: czas ~490 ms, rozmiar ~107 KB, pamięć RAM ~13 MB (redukcja alokacji RAM o 89% dzięki strumieniowemu zapisowi).
-  - **8 równoległych DOCX (łącznie 400 000 komórek)**: czas ~585 ms, szczytowy Working Set procesu ~297 MB (bezpiecznie poniżej limitu 512 MB kontenera).
+  - **CSV (50 kolumn x 1 000 wierszy)**: czas ~4 ms, rozmiar ~381 KB, delta sterty zarządzanej ~4 MB.
+  - **HTML (50 kolumn x 1 000 wierszy)**: czas ~15 ms, rozmiar ~1,93 MB, delta sterty zarządzanej ~15 MB.
+  - **DOCX (50 kolumn x 1 000 wierszy - strumieniowanie OpenXmlWriter)**: czas ~160–490 ms, rozmiar ~107 KB, delta sterty zarządzanej ~13–28 MB (zapis strumieniowy wiersz-po-wierszu redukuje retencję obiektów w pamięci względem pełnego drzewa DOM).
+  - Uwaga: Testy wydajnościowe mierzą różnicę sterty zarządzanej oraz próbkę Working Set po zakończeniu funkcji; rzeczywisty szczyt pamięciowy w kontenerze zależy od współbieżnego buforowania żądań HTTP i harmonogramu GC w cgroups.
 - **Zabezpieczenie Generowanych Formatów**:
   - **CSV Formula Injection**: Znaki formuł kalkulacyjnych (`=`, `+`, `-`, `@`, `\t`, `\r`) na początku komórki są neutralizowane pojedynczym apostrofem, z zachowaniem poprawności liczb ujemnych i dodatnich.
   - **HTML Encoding**: Wszystkie nagłówki i wartości są ściśle eskejpowane funkcją `WebUtility.HtmlEncode`.

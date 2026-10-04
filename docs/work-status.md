@@ -1,91 +1,51 @@
-# Status prac Inventory Generator (Work Status) — Closeout Complete
+# Status prac Inventory Generator (Work Status)
 
-## 1. Aktualny stan (Production Checkpoint)
+## 1. Podział statusu (Separation of Boundaries)
 
-- **Repozytorium**: `SzczepanGrela/inventory-generator`
-- **Gałąź główna**: `main`
-- **Aktualna rewizja produkcyjna**: `9a2dee631f4aff76dc2024d3036287ad93216452`
-- **Środowisko produkcyjne**: `https://inventory-generator.grela.dev` (aktywne, zdrowe `200 OK`, CSP, HSTS, brak podatności)
-- **Status reguł branch protection**: Na gałęzi `main` obowiązuje ruleset `#24407679` (wymóg PR, brak direct push, wymagany zielony `Quality gate`).
-- **Otwarte PR-y**: 0 (wszystkie PR-y aplikacji i Dependabota scalone po przejściu pełnego CI i wdrożeniu produkcyjnym).
-
----
-
-## 2. Zrealizowane zadania naprawcze (Closeout D02.3a–f)
-
-Zgodnie z wytycznymi koordynatora (`inventory-generator-gemini-closeout.md` i audytem z 2026-10-03):
-
-### Zadanie 1: Bezpieczeństwo frontendowe (HTML Sinks) i walidacja Local-First
-- **Eliminacja HTML injection w `wwwroot/js/app.js`**:
-  - `showToast` i `showRateLimitToast` przepisane z użyciem bezpiecznych węzłów DOM (`createElement` + `textContent`). Znaczniki HTML w nazwach projektów/kolumn są renderowane jako czysty tekst.
-  - Zabezpieczono renderowanie w `renderAttributesSettings` (`badge` oraz właściwości szerokości tworzone przez DOM API zamiast konkatenacji HTML).
-- **Ścisła walidacja i odporność cache w `sanitizeProjectData` i `loadLocalData`**:
-  - `sanitizeProjectData`: Odrzucanie obiektów null/niebędących obiektami w definicjach kolumn i produktach, wymóg co najmniej jednej poprawnej kolumny (`cleanAttributes.length >= 1`), ścisła weryfikacja wartości typu Enum oraz ograniczenie szerokości kolumn (od 200 do 4000).
-  - `loadLocalData`: W przypadku uszkodzonego stanu (malformed JSON lub brak kolumn) aplikacja nie zawiesza się, wyświetla toast ostrzegawczy (`toast_cache_corrupted`) i bezpiecznie przywraca domyślny szablon kolumn.
-  - Błędy w importowanym pliku JSON nie niszczą aktualnego stanu projektu w pamięci ani w `localStorage`.
-
-### Zadanie 2: Backend Null-Safety, walidacja i limity Kestrel
-- **Eliminacja ryzyka HTTP 500 / `NullReferenceException` w `Services/PayloadValidator.cs`**:
-  - Obsłużono `null` elementy w tablicy `Attributes` (np. `{"attributes": [null]}`) oraz `Products`.
-  - Dodano walidację poprawności `attr.Type` z `Enum.IsDefined(typeof(AttributeType), attr.Type)`.
-  - Dodano walidację zakresu szerokości kolumny `attr.ColumnWidth` (50–5000).
-  - Dodano walidację wartości Enum (co najmniej jedna niepusta wartość dla kolumn Enum).
-  - Dodano walidację kluczy słowników produktów (zakaz pustych lub whitespace kluczy) oraz ochronę przed wartościami `NaN` i `Infinity` dla liczb zmiennoprzecinkowych.
-  - Wszystkie powyższe błędy zwracają precyzyjny kod HTTP 400 Bad Request z opisem.
-- **Obsługa strumieniowanego limitu 2 MB Kestrel (`Program.cs`)**:
-  - Dodano middleware przechwytujący `BadHttpRequestException` z kodem 413 dla żądań strumieniowych (chunked transfer) przekraczających 2 MB.
-- **Ustrukturyzowane logowanie (`Program.cs`)**:
-  - Dodano `LogWarning` dla odrzuceń walidacji (`validationError`), limitów token bucket (`RetryAfter`) oraz wyczerpania slotów współbieżności DOCX.
-  - Dodano `LogInformation` z metrykami wykonania po każdym udanym eksporcie (`Format`, `ClientIp`, `DurationMs`, `Rows`, `Columns`, `OutputBytes`), bez logowania poufnej zawartości komórek.
-
-### Zadanie 3: Testy regresyjne i zestaw testów przeglądarkowych Playwright
-- **Nowy pakiet testów przeglądarkowych E2E w `tests/browser/test-browser.mjs`** (uruchamiany w GitHub Actions):
-  - Test 1: Inicjalizacja, ładowanie szablonu i trwałość Local-First w `localStorage` across reloads – PASS.
-  - Test 2: Ochrona przed HTML Injection / XSS w toastach (dosłowne renderowanie tagów) – PASS.
-  - Test 3: Wykrywanie i bezpieczne odzyskiwanie uszkodzonego cache – PASS.
-  - Test 4: Dostępność modali (a11y), pułapka fokusu i zamykanie klawiszem `Escape` – PASS.
-  - Test 5: Płynne przełączanie języków PL / EN – PASS.
-  - Test 6: Odliczanie sekund w toascie limitu 429 i blokada przycisku pobierania – PASS.
-- **Integracja w CI (`.github/workflows/quality.yml`)**: Krok `Browser E2E Tests (Playwright)` zintegrowany w bramce `Quality gate`.
-
-### Zadanie 4: Pomiary wydajności, optymalizacja strumieniowa DOCX i jednostki kosztu (Cost Units)
-- **Refaktoryzacja `DocxGenerator` na `OpenXmlWriter` (strumieniowy zapis XML)**:
-  - Zastąpiono tworzenie pełnego drzewa DOM OpenXML zapisem strumieniowym linia-po-linii.
-  - Redukcja alokacji pamięci dla 50k komórek ze **127.6 MB** do **13.2 MB** (spadek o 89.7%!).
-  - Skrócenie czasu generowania z **~767 ms** do **~490 ms**.
-- **Semafor współbieżności z kolejkowaniem w pamięci (Concurrency Queue)**:
-  - Zwiększono limit aktywnych generacji z 3 do **8 równoległych slotów**.
-  - Wprowadzono bezpieczne kolejkowanie w żądaniu HTTP do 5 sekund (`TimeSpan.FromSeconds(5)`) z obsługą anulowania przez klienta (`RequestAborted`).
-  - Pomiar obciążeniowy 8 jednoczesnych max-size DOCX (łącznie 400 000 komórek): czas **585 ms**, szczytowy Working Set procesu zaledwie **297 MB** (bezpiecznie poniżej limitu 512 MB kontenera).
-- Udokumentowano model ważonych jednostek kosztu (*cost units*) i profil zasobów w `README.md`.
-
-### Zadanie 5: Aktualizacja dokumentacji i obsługa Dependabota
-- Usunięto nieaktualne wzmianki o .NET 8 w `README.md`, zastępując je specyfikacją .NET 10 LTS.
-- Zaktualizowano instrukcje uruchamiania testów o Playwright.
-- Przetestowano i scalono PR-y Dependabota:
-  - **PR #17** (`05eaaba`): Aktualizacja bazowych digestów obrazów SDK i ASP.NET Core Runtime .NET 10.
-  - **PR #18** (`9a2dee6`): Aktualizacja kluczowych GitHub Actions do najnowszych wydań (actions/checkout@v7, docker/setup-buildx-action@v4, docker/login-action@v4, docker/build-push-action@v7, actions/attest-build-provenance@v3) – eliminacja ostrzeżeń o deprecacji Node 20 w CI.
-
-### Zadanie 6: Procedury operatorskie i protokół pomiaru VPS
-- Opracowano kompleksowy przewodnik `docs/operator-procedures.md`:
-  - Procedura odrzucenia kandydata (kryteria digestu, atestacji, dryfu konfiguracji Coolify).
-  - Procedura automatycznego i manualnego rollbacku po nieudanych testach dymnych.
-  - Weryfikacja rzeczywistego środowiska uruchomieniowego (*effective-runtime readback* dla pamięci 512 MiB, CPU 1.0, UID 1654).
-  - Protokół pomiaru nakładania się kontenerów (*rolling overlap*) na współdzielonym VPS ze ścisłymi progami awaryjnego zatrzymania (*stop thresholds*: RAM hosta < 1000 MiB, CPU > 85%, opóźnienie TTT > 500 ms).
-  - Potwierdzono zasadę niewykonywania testów awaryjnych/obciążeniowych na współdzielonym VPS bez dedykowanego okna operacyjnego.
+- **Aktywna wersja produkcyjna (Live VPS)**:
+  - Commit SHA: `9a2dee631f4aff76dc2024d3036287ad93216452` (PR #18, .NET 10 LTS)
+  - Środowisko: `https://inventory-generator.grela.dev`
+  - Weryfikacja: `GET /api/health` zwraca 200 OK / SHA `9a2dee6...`; nagłówki CSP, nosniff, DENY, HSTS; `POST /api/export/csv` z `{"attributes": [null]}` zwraca 400 Bad Request.
+  - Rewizje `520be2c` (PR #21) oraz `1410c48` (PR #22) zostały scalone do `main`, ale **nie zostały wdrożone na produkcję** (decyzja wstrzymana do czasu zakończenia przeglądu poprawek).
+- **Gałąź główna (main)**: `1410c48fd7a6184da990e50361da6725962007eb` (chroniona rulesetem `#24407679`, wymóg PR i zielonego `Quality gate`).
+- **Status akceptacji koordynatora (Audyt 2026-10-03 / IC03-S–P)**:
+  - Zadania D02.3a/d: Zaakceptowane.
+  - Zadania D02.3b/c/e/f: Częściowe / Otwarte (wymagają realizacji korekt IC03-1–5).
+  - Stopień zaawansowania roadmapy: 80% (PR #13 w `grela-dev-roadmap`).
+  - Usunięto bezwarunkowe roszczenia o "100% zamknięciu", "braku podatności" oraz "całkowitym braku OOM".
 
 ---
 
-## 3. Zestawienie wdrożeń i weryfikacja produkcyjna
+## 2. Stan prac w podziale na obszary
 
-| Wdrożenie / Run | Commit SHA | Zakres zmian | Wynik CI | Akceptacja Prod | Weryfikacja Live |
-| --- | --- | --- | --- | --- | --- |
-| **PR #20** (`37133807429`) | `c1630a1` | Closeout: XSS, null-safety, testy E2E, benchmarki, docs | ✓ Quality gate | Zaakceptowano (SzczepanGrela) | ✓ HTTP 200, defekt null zwrócił 400 |
-| **PR #17** | `05eaaba` | Dependabot: .NET 10 base digests | ✓ Quality gate | Scalono do main | Włączono do kolejnego wydania |
-| **PR #18** (`37134465097`) | `9a2dee6` | Dependabot: GitHub Actions major updates | ✓ Quality gate | Zaakceptowano (SzczepanGrela) | ✓ HTTP 200, revision `9a2dee6...` aktywna |
+### Obszar A: Architektura eksportu i współbieżność (IC03-2)
+- **Strumieniowanie DOCX**: Zachowano optymalizację w `DocxGenerator` opartą na `OpenXmlWriter`. Zapis wiersz-po-wierszu redukuje retencję obiektów w pamięci względem pełnego drzewa DOM.
+- **Konserwatywny semafor współbieżności (3 sloty, no-wait)**:
+  - Przywrócono produkcyjny limit **3 równoczesnych slotów** w `ExportRateLimiter` (`maxConcurrency = 3`).
+  - Przywrócono natychmiastową odmowę wstępu (`TimeSpan.Zero`) w `Program.cs` – żądania przy zajętych 3 slotach otrzymują natychmiast `HTTP 429 Too Many Requests` (`Retry-After: 1`).
+  - Wyeliminowano nieograniczoną czasowo kolejkę oczekujących żądań w pamięci.
+- **Pomiary wydajnościowe (`BenchmarkTests`)**:
+  - Poprawiono etykiety: `LiveManagedHeapDelta` precyzyjnie opisuje różnicę sterty zarządzanej mierzoną przez `GC.GetTotalMemory`, a nie całkowitą sumę alokacji bajtowych.
+  - Próbka Working Set po zakończeniu funkcji została oznaczona jako `ProcessWorkingSetAfterCompletion` (nie jako szczytowy profiler ciągły).
+  - Dodano test z trzema odrębnymi zestawami danych o zróżnicowanych kształtach brzegowych (tabela szeroka 50x1k, tabela długa 10x5k, tabela gęsta 25x1k ze zwiększonym tekstem).
+
+### Obszar B: Bezpieczeństwo danych i logowanie (w trakcie realizacji w PR 2)
+- Wdrożone: DOM text nodes w `showToast`/`showRateLimitToast`, ochrona przed null w `PayloadValidator.cs`.
+- Do poprawy (IC03-1 & IC03-3):
+  - Zachowanie nienaruszonego cache w `localStorage` w razie błędu walidacji (zakaz nadpisywania pustym szablonem).
+  - Udostępnienie jawnej opcji eksportu ratunkowego (*recovery export*) przed resetem.
+  - Usunięcie treści nazw kolumn/kluczy z logów walidacji (zastąpienie kodami błędów i bezpiecznymi wymiarami liczbowymi).
+
+### Obszar C: Procedury operatorskie i testy E2E (w trakcie realizacji w PR 3)
+- Do poprawy (IC03-4 & IC03-5):
+  - Poprawa poleceń w runbooku operatorskim (`docs/operator-procedures.md`): nazwa wejścia workflow `digest`, nazwane argumenty `--base-url` w `smokecheck.py`, jednoznaczna rezolucja ID kontenera, poprawna domena `tictactoe.grela.dev`, uściślenie pojęć skanera (`ignore-unfixed`) i wskaźników OOM / CPU.
+  - Rozszerzenie scenariuszy przeglądarkowych Playwright o rzeczywiste pobieranie plików, obsługę błędów sieciowych, blokadę i odblokowanie przycisku przy kodzie 429.
 
 ---
 
-## 4. Podsumowanie gotowości do odbioru
+## 3. Plan wdrożenia poprawek (Kolejność PR-ów)
 
-Wszystkie punkty z instrukcji koordynatora (`artifacts/infra-netfilmx-http-security/docs/handoffs/inventory-generator-gemini-closeout.md`) zostały zrealizowane, zweryfikowane automatycznymi testami oraz wdrożone na produkcję. Repozytorium jest gotowe do formalnego przekazania koordynatorowi projektu.
+1. **PR 1 (niniejszy)**: `fix/concurrency-and-capacity-measurements` – przywrócenie limitu 3 slotów no-wait, uściślenie nazewnictwa w benchmarkach, aktualizacja README.md i work-status.md.
+2. **PR 2**: `fix/data-preservation-and-payload-free-logs` – ochrona cache, eksport ratunkowy, ścisła walidacja typów w JS, logowanie oparte wyłącznie na kodach błędów (bez nazw kolumn).
+3. **PR 3**: `fix/acceptance-runbook-and-browser-regressions` – korekta runbooka operatorskiego, rozbudowa testów przeglądarkowych Playwright i regresji Kestrel.
+
