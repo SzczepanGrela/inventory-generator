@@ -332,18 +332,89 @@ try {
   const recoveryModal5001 = await page.locator("#recovery-modal").isVisible();
   assert(recoveryModal5001, "Recovery modal must be shown on over-limit data");
 
-  // Test raw JSON recovery download
+  // Test raw JSON recovery download and verify exact contents
   const [recDownload] = await Promise.all([
     page.waitForEvent("download"),
     page.click("#recovery-download-btn")
   ]);
   assert(recDownload.suggestedFilename().includes("inventory_recovery_backup_"), "Recovery download filename must indicate raw backup");
+  const recStream = await recDownload.createReadStream();
+  const recChunks = [];
+  for await (const chunk of recStream) {
+    recChunks.push(chunk);
+  }
+  const recParsed = JSON.parse(Buffer.concat(recChunks).toString("utf-8"));
+  assert(Array.isArray(recParsed.products) && recParsed.products.length === 5001, `Recovery backup must contain exactly 5001 product rows, got ${recParsed.products?.length}`);
+  assert(recParsed._recoveryNotice, "Recovery backup must include recovery notice header");
 
   // Dismiss recovery modal in-memory without touching storage
   await page.click("#recovery-dismiss-btn");
   await page.waitForSelector("#recovery-modal", { state: "hidden" });
   const rawAfterDismiss = await page.evaluate(() => localStorage.getItem("inventory_products"));
   assert(rawAfterDismiss === synthetic5001Data, "Storage must remain untouched after in-memory dismissal");
+
+  // Verify recovery banner is now visible in the layout offering a route back to recovery
+  const bannerVisible = await page.locator("#recovery-banner").isVisible();
+  assert(bannerVisible, "Recovery banner must be visible in layout after temporary dismissal");
+
+  // IC04-1 Reproduction 1: Add product through form in temporary session
+  console.log("Subtest 7B (IC04-1): Adding product via UI during temporary session must NOT overwrite 5001 rows in storage...");
+  await page.click("#open-product-modal-btn");
+  await page.waitForSelector("#product-modal:not(.hide)");
+  const tempInputs = page.locator("#dynamic-fields-container input");
+  const tempCount = await tempInputs.count();
+  for (let i = 0; i < tempCount; i++) {
+    const input = tempInputs.nth(i);
+    const type = await input.getAttribute("type");
+    if (type === "checkbox") {
+      await input.check();
+    } else if (type === "number") {
+      await input.fill("42");
+    } else if (type === "date") {
+      await input.fill("2026-10-05");
+    } else {
+      await input.fill("Temporary Added Item");
+    }
+  }
+  await page.click("#submit-product-btn");
+  await page.waitForSelector("#product-modal", { state: "hidden" });
+
+  // In-memory table displays the added product
+  const tableContentTemp = await page.textContent("#inventory-tbody");
+  assert(tableContentTemp.includes("Temporary Added Item"), "Temporary added item must appear in UI table");
+
+  // BUT localStorage MUST still contain the preserved 5001 rows!
+  const rawAfterAdd = await page.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(rawAfterAdd === synthetic5001Data, `Storage MUST preserve original 5001 rows after UI add! Got length: ${rawAfterAdd?.length}`);
+  assert(rawAfterAdd !== "[]", "Storage must not be empty array");
+
+  // Test language switch during temporary session preserves data
+  await page.click("#lang-en-btn");
+  await page.waitForTimeout(200);
+  const rawAfterLangSwitch = await page.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(rawAfterLangSwitch === synthetic5001Data, "Storage must remain preserved after language switch in temporary session");
+  await page.click("#lang-pl-btn");
+  await page.waitForTimeout(200);
+
+  // Test reopening recovery modal via banner button
+  await page.click("#reopen-recovery-btn");
+  await page.waitForSelector("#recovery-modal:not(.hide)");
+  const reopenedModalVisible = await page.locator("#recovery-modal").isVisible();
+  assert(reopenedModalVisible, "Clicking reopen recovery button in banner must display recovery modal");
+
+  // Test reload during temporary session preserves data and re-presents recovery
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForSelector("#recovery-modal:not(.hide)");
+  const rawAfterReloadAgain = await page.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(rawAfterReloadAgain === synthetic5001Data, "Storage must remain preserved across reloads until explicit reset");
+
+  // Explicit user reset via button restores default template
+  await page.click("#recovery-reset-btn");
+  await page.waitForSelector("#recovery-modal", { state: "hidden" });
+  const rawAfterExplicitReset = await page.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(JSON.parse(rawAfterExplicitReset).length === 0, "Explicit reset must deliberately replace storage with empty product list");
+  const bannerHiddenAfterReset = await page.locator("#recovery-banner").isHidden();
+  assert(bannerHiddenAfterReset, "Recovery banner must be hidden after explicit reset");
 
   // 7C: File-input import workflow rejects invalid files without modifying storage
   console.log("Subtest 7C: Import via file-input workflow rejects invalid schema and preserves storage...");
@@ -392,6 +463,68 @@ try {
   assert(validStored.includes("ImportedItemValue"), "Valid JSON import must successfully update stored products");
   const tableWithImport = await page.textContent("#inventory-tbody");
   assert(tableWithImport.includes("ImportedItemValue"), "Valid JSON import must update table DOM");
+
+  // 7D: Failed default-template fetch during reset does not clear recovery
+  console.log("Subtest 7D: Failed default template fetch during reset preserves recovery state...");
+  const recContext = await browser.newContext();
+  const recPage = await recContext.newPage({ viewport: { width: 1280, height: 800 } });
+  await recPage.goto(baseUrl, { waitUntil: "networkidle" });
+  await recPage.evaluate(() => {
+    localStorage.setItem("inventory_attributes", "corrupted-json{{");
+    localStorage.setItem("inventory_products", "[]");
+  });
+  await recPage.reload({ waitUntil: "networkidle" });
+  await recPage.waitForSelector("#recovery-modal:not(.hide)");
+
+  // Intercept default attributes endpoint returning 500
+  await recPage.route("**/api/attributes/default/**", (route) => {
+    route.fulfill({ status: 500, body: "Internal Server Error" });
+  });
+
+  await recPage.click("#recovery-reset-btn");
+  const failResetToastLocator = recPage.locator(".toast-error .toast-message", { hasText: /Błąd|Failed/ });
+  await failResetToastLocator.waitFor({ state: "visible" });
+  const failResetToast = await failResetToastLocator.textContent();
+  assert(failResetToast.includes("Błąd") || failResetToast.includes("Failed"), `Expected error toast on failed reset, got: ${failResetToast}`);
+
+  // Raw corrupted attributes MUST still be in localStorage (not wiped)
+  const rawCorruptAfterFailedReset = await recPage.evaluate(() => localStorage.getItem("inventory_attributes"));
+  assert(rawCorruptAfterFailedReset === "corrupted-json{{", "Failed reset must NOT modify or clear corrupted cache in localStorage");
+
+  // Unroute and perform successful reset
+  await recPage.unroute("**/api/attributes/default/**");
+  await recPage.click("#recovery-reset-btn");
+  await recPage.waitForSelector("#recovery-modal", { state: "hidden" });
+  const rawAfterSuccessReset = await recPage.evaluate(() => localStorage.getItem("inventory_attributes"));
+  assert(rawAfterSuccessReset !== "corrupted-json{{", "Successful reset must update attributes in localStorage");
+
+  await recContext.close();
+
+  // 7E: IC04-1 Reproduction 2: Fresh browser context without preference cookie preserves malformed attributes
+  console.log("Subtest 7E: Fresh browser context without preference cookie preserves malformed attributes...");
+  const freshContext = await browser.newContext();
+  const freshPage = await freshContext.newPage({ viewport: { width: 1280, height: 800 } });
+  await freshPage.goto(baseUrl, { waitUntil: "networkidle" });
+
+  // Ensure no cookies exist and seed malformed attributes
+  await freshPage.evaluate(() => {
+    document.cookie = "inventory_is_edited=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+    localStorage.setItem("inventory_attributes", "bad-json{{");
+    localStorage.setItem("inventory_products", "[]");
+  });
+
+  await freshPage.reload({ waitUntil: "networkidle" });
+
+  // Recovery modal MUST be presented
+  await freshPage.waitForSelector("#recovery-modal:not(.hide)");
+  const freshModalVisible = await freshPage.locator("#recovery-modal").isVisible();
+  assert(freshModalVisible, "Recovery modal must be visible on startup in fresh context without preference cookie");
+
+  // Raw attributes MUST NOT have been overwritten by loadLanguage before recovery
+  const freshRawAttrs = await freshPage.evaluate(() => localStorage.getItem("inventory_attributes"));
+  assert(freshRawAttrs === "bad-json{{", `Malformed attributes must be preserved on startup, got: ${freshRawAttrs}`);
+
+  await freshContext.close();
 
   console.log("✓ Test 7 passed.");
 

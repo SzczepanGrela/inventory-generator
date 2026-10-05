@@ -76,6 +76,17 @@
     <div class="main-layout">
       <!-- Main Content: Table -->
       <main class="content-area">
+        <!-- Recovery Active Warning Banner -->
+        <div id="recovery-banner" class="recovery-banner hide" role="status" aria-live="polite">
+          <div class="recovery-banner-content">
+            <i class="fa-solid fa-triangle-exclamation text-orange"></i>
+            <span id="recovery-banner-text" data-i18n="recovery_banner_text">Tryb tymczasowy: dane w pamięci podręcznej są zabezpieczone przed nadpisaniem.</span>
+          </div>
+          <button type="button" id="reopen-recovery-btn" class="btn btn-warning btn-sm" aria-label="Otwórz opcje odzyskiwania">
+            <i class="fa-solid fa-life-ring"></i> <span data-i18n="recovery_banner_btn">Opcje odzyskiwania</span>
+          </button>
+        </div>
+
         <!-- Inventory List Panel -->
         <div class="panel flex-grow">
           <div class="panel-header">

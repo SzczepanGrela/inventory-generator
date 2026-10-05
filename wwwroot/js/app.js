@@ -25,6 +25,7 @@ let appState = {
 };
 
 function markAsEdited(state = true) {
+  if (appState.corruptedCache) return; // Do not persist edited preference cookie during temporary recovery session
   appState.isEdited = state;
   setCookie('inventory_is_edited', state ? 'true' : 'false');
 }
@@ -104,20 +105,26 @@ const elements = {
   modalDownloadBtn: document.getElementById('modal-download-btn'),
   toastContainer: document.getElementById('toast-container'),
 
-  // Cache Recovery Modal
+  // Cache Recovery Modal & Banner
   recoveryModal: document.getElementById('recovery-modal'),
   recoveryDownloadBtn: document.getElementById('recovery-download-btn'),
   recoveryResetBtn: document.getElementById('recovery-reset-btn'),
   recoveryDismissBtn: document.getElementById('recovery-dismiss-btn'),
-  recoveryErrorMessage: document.getElementById('recovery-error-message')
+  recoveryErrorMessage: document.getElementById('recovery-error-message'),
+  recoveryBanner: document.getElementById('recovery-banner'),
+  reopenRecoveryBtn: document.getElementById('reopen-recovery-btn')
 };
 
 // Initialize Application
 document.addEventListener('DOMContentLoaded', async () => {
   setTheme(appState.currentTheme);
-  await loadLanguage(appState.currentLanguage);
   setupEventListeners();
+  // Load locale strings first so translations are available for UI/toasts
+  await loadTranslations(appState.currentLanguage);
+  // IC04-1: Inspect and validate existing cache BEFORE any default persistence can run
   await loadLocalData();
+  translatePage();
+  updateLangUI();
 });
 
 // Modal Accessibility & Focus Management
@@ -294,6 +301,11 @@ function setupEventListeners() {
   if (elements.recoveryDismissBtn) {
     elements.recoveryDismissBtn.addEventListener('click', dismissCacheRecovery);
   }
+  if (elements.reopenRecoveryBtn) {
+    elements.reopenRecoveryBtn.addEventListener('click', () => {
+      showCacheRecoveryModal(appState.corruptedCache?.errorMessage);
+    });
+  }
 }
 
 function showConfirmModal(titleText, messageText, onConfirmCallback) {
@@ -332,6 +344,18 @@ function showConfirmModal(titleText, messageText, onConfirmCallback) {
 // ----------------------------------------------------
 // LOCAL-FIRST DATA STORAGE (localStorage)
 // ----------------------------------------------------
+function showRecoveryBanner() {
+  if (elements.recoveryBanner) {
+    elements.recoveryBanner.classList.remove('hide');
+  }
+}
+
+function hideRecoveryBanner() {
+  if (elements.recoveryBanner) {
+    elements.recoveryBanner.classList.add('hide');
+  }
+}
+
 function showCacheRecoveryModal(errorMessage) {
   if (!elements.recoveryModal) return;
   if (elements.recoveryErrorMessage) {
@@ -369,35 +393,38 @@ function downloadRecoveryBackup() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  showToast('Pobrano kopię awaryjną.', 'success');
+  showToast(getTranslation('toast_recovery_download_success') || 'Pobrano kopię awaryjną.', 'success');
 }
 
 async function resetCorruptedCacheToDefault() {
   try {
     const res = await fetch(`${appState.apiBase}/api/attributes/default/${appState.currentLanguage}`);
-    if (res.ok) {
-      const defaultAttrs = await res.json();
-      const sanitized = sanitizeProjectData({ attributes: defaultAttrs, products: [] });
-      appState.attributes = sanitized.attributes;
-      appState.products = [];
-      appState.nextProductId = 1;
-      appState.corruptedCache = null;
-      saveAttributesToLocalStorage();
-      saveProductsToLocalStorage();
-      renderUI();
-      closeCacheRecoveryModal();
-      showToast('Zresetowano dane do domyślnego szablonu.', 'info');
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
     }
-  } catch (err) {
+    const defaultAttrs = await res.json();
+    const sanitized = sanitizeProjectData({ attributes: defaultAttrs, products: [] });
+    appState.attributes = sanitized.attributes;
+    appState.products = [];
+    appState.nextProductId = 1;
+    appState.corruptedCache = null;
+    hideRecoveryBanner();
+    saveAttributesToLocalStorage(true);
+    saveProductsToLocalStorage(true);
+    renderUI();
     closeCacheRecoveryModal();
+    showToast(getTranslation('toast_defaults_restored') || 'Zresetowano dane do domyślnego szablonu.', 'info');
+  } catch (err) {
     console.error('Failed to reset default template:', err);
-    showToast('Błąd pobierania szablonu domyślnego.', 'error');
+    // IC04-1: Preserve corruptedCache and do NOT dismiss recovery modal as if it succeeded!
+    showToast(getTranslation('toast_reset_failed') || 'Błąd pobierania szablonu domyślnego. Dane nie zostały zresetowane.', 'error');
   }
 }
 
 function dismissCacheRecovery() {
   closeCacheRecoveryModal();
-  showToast('Kontynuujesz w trybie tymczasowym (pamięć lokalna nie została nadpisana).', 'warning');
+  showRecoveryBanner();
+  showToast(getTranslation('toast_temporary_session') || 'Kontynuujesz w trybie tymczasowym (pamięć lokalna pozostaje zabezpieczona).', 'warning');
 }
 
 async function loadLocalData() {
@@ -434,7 +461,7 @@ async function loadLocalData() {
         corruptionMessage = cacheErr.message || 'Błąd walidacji danych w pamięci podręcznej.';
         console.warn('Lokalny cache jest uszkodzony lub niezgodny:', cacheErr);
 
-        // IC03-1: Preserve raw cache in localStorage. Do NOT overwrite storage with empty template!
+        // IC04-1: Preserve raw cache in localStorage. Do NOT overwrite storage with empty template!
         appState.corruptedCache = {
           rawAttributes: savedAttributes,
           rawProducts: savedProducts,
@@ -442,11 +469,12 @@ async function loadLocalData() {
         };
 
         showToast(
-          getTranslation('toast_cache_corrupted') || 'Wykryto problem z danymi w pamięci podręcznej. Surowe dane zostały zachowane.',
+          getTranslation('toast_cache_corrupted') || 'Wykryto problem z danymi w pamięci podręcznej. Twoje surowe dane zostały zabezpieczone przed nadpisaniem.',
           'error'
         );
 
         showCacheRecoveryModal(corruptionMessage);
+        showRecoveryBanner();
       }
     }
 
@@ -501,7 +529,11 @@ function handleStorageError(err) {
   }
 }
 
-function saveAttributesToLocalStorage() {
+function saveAttributesToLocalStorage(force = false) {
+  if (appState.corruptedCache && !force) {
+    // IC04-1: Centralized recovery guard - do NOT overwrite preserved raw cache during temporary session!
+    return;
+  }
   try {
     localStorage.setItem('inventory_attributes', JSON.stringify(appState.attributes));
   } catch (err) {
@@ -509,7 +541,11 @@ function saveAttributesToLocalStorage() {
   }
 }
 
-function saveProductsToLocalStorage() {
+function saveProductsToLocalStorage(force = false) {
+  if (appState.corruptedCache && !force) {
+    // IC04-1: Centralized recovery guard - do NOT overwrite preserved raw cache during temporary session!
+    return;
+  }
   try {
     localStorage.setItem('inventory_products', JSON.stringify(appState.products));
   } catch (err) {
@@ -520,15 +556,24 @@ function saveProductsToLocalStorage() {
 // ----------------------------------------------------
 // TRANSLATION ENGINE (i18n)
 // ----------------------------------------------------
-async function loadLanguage(lang) {
+async function loadTranslations(lang) {
   try {
     const response = await fetch(`${appState.apiBase}/locales/${lang}.json`);
     if (!response.ok) throw new Error(`Could not load translations for: ${lang}`);
     appState.translations = await response.json();
     appState.currentLanguage = lang;
     setCookie('inventory_lang', lang);
+  } catch (error) {
+    console.error('i18n loadTranslations error:', error);
+  }
+}
+
+async function loadLanguage(lang) {
+  try {
+    await loadTranslations(lang);
     
-    if (!appState.isEdited) {
+    // IC04-1: Only save default attributes on genuine first-time visit when no cache exists and not in recovery
+    if (!appState.isEdited && !appState.corruptedCache && localStorage.getItem('inventory_attributes') === null) {
       try {
         const attrRes = await fetch(`${appState.apiBase}/api/attributes/default/${lang}`);
         if (attrRes.ok) {
@@ -1603,8 +1648,13 @@ function importProjectFromJson(e) {
         appState.nextProductId = 1;
       }
 
-      saveAttributesToLocalStorage();
-      saveProductsToLocalStorage();
+      // Valid imported project explicitly replaces previous project
+      appState.corruptedCache = null;
+      hideRecoveryBanner();
+      closeCacheRecoveryModal();
+
+      saveAttributesToLocalStorage(true);
+      saveProductsToLocalStorage(true);
       markAsEdited();
       
       exitEditMode();
