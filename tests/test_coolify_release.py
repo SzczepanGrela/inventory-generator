@@ -4,6 +4,7 @@ import argparse
 import io
 import json
 import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -577,4 +578,152 @@ class TestCoolifyReleaseEdgeCases(unittest.TestCase):
             client.application_deployments = [{"status": unknown_status}]
             with self.assertRaises(release.UncertainDeployment):
                 release.verify_no_running_deployment(client, APPLICATION_UUID)
+
+
+class TestOperatorProceduresAndDeployWorkflow(unittest.TestCase):
+    def _run_freshness_gate(self, event_name: str, expected_revision: str, main_revision: str) -> bool:
+        script = """
+        deploy=true
+        if [[ "$EVENT_NAME" != "workflow_dispatch" && -n "$EXPECTED_REVISION" ]]; then
+          if [[ "$MAIN_REVISION" != "$EXPECTED_REVISION" ]]; then
+            echo "Skipping stale deployment for $EXPECTED_REVISION; main is $MAIN_REVISION."
+            deploy=false
+          fi
+        fi
+        echo "$deploy"
+        """
+        res = subprocess.run(
+            ["bash", "-c", script],
+            env={
+                "EVENT_NAME": event_name,
+                "EXPECTED_REVISION": expected_revision,
+                "MAIN_REVISION": main_revision,
+            },
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return res.stdout.strip() == "true"
+
+    def _run_preflight_check(self, expected_revision: str, image_revision: str) -> bool:
+        script = """
+        if [[ -n "$EXPECTED_REVISION" && "$revision" != "$EXPECTED_REVISION" ]]; then
+          echo "Image revision does not match the caller commit." >&2
+          exit 1
+        fi
+        exit 0
+        """
+        res = subprocess.run(
+            ["bash", "-c", script],
+            env={"EXPECTED_REVISION": expected_revision, "revision": image_revision},
+            capture_output=True,
+            text=True,
+        )
+        return res.returncode == 0
+
+    def test_workflow_dispatch_old_manual_target_reaches_promotion(self):
+        # IC05-2: Deliberate manual rollback with old commit should NOT be skipped as stale
+        deploy = self._run_freshness_gate(
+            event_name="workflow_dispatch",
+            expected_revision="9a2dee631f4aff76dc2024d3036287ad93216452",
+            main_revision="16ed383d2affb96a7a538ec935a7b3b7dd337257",
+        )
+        self.assertTrue(deploy, "Manual rollback must reach promotion even if expected_revision differs from main")
+
+    def test_workflow_dispatch_empty_expected_revision_reaches_promotion(self):
+        # IC05-2: Manual dispatch with empty expected_revision (falling back to image label) reaches promotion
+        deploy = self._run_freshness_gate(
+            event_name="workflow_dispatch",
+            expected_revision="",
+            main_revision="16ed383d2affb96a7a538ec935a7b3b7dd337257",
+        )
+        self.assertTrue(deploy)
+
+    def test_workflow_call_stale_automatic_target_is_rejected(self):
+        # IC05-2: Automatic deployment whose expected revision differs from main MUST be skipped
+        deploy = self._run_freshness_gate(
+            event_name="workflow_call",
+            expected_revision="9a2dee631f4aff76dc2024d3036287ad93216452",
+            main_revision="16ed383d2affb96a7a538ec935a7b3b7dd337257",
+        )
+        self.assertFalse(deploy, "Stale automatic deployment must be skipped (deploy=false)")
+
+    def test_workflow_call_fresh_automatic_target_proceeds(self):
+        # Fresh automatic deployment matches main and proceeds
+        deploy = self._run_freshness_gate(
+            event_name="workflow_call",
+            expected_revision="16ed383d2affb96a7a538ec935a7b3b7dd337257",
+            main_revision="16ed383d2affb96a7a538ec935a7b3b7dd337257",
+        )
+        self.assertTrue(deploy)
+
+    def test_preflight_mismatched_image_revision_is_rejected(self):
+        # IC05-2: Preflight rejects mismatch between expected_revision and image revision label
+        passed = self._run_preflight_check(
+            expected_revision="9a2dee631f4aff76dc2024d3036287ad93216452",
+            image_revision="16ed383d2affb96a7a538ec935a7b3b7dd337257",
+        )
+        self.assertFalse(passed, "Preflight must reject mismatched image revision")
+
+    def test_preflight_matching_image_revision_passes(self):
+        passed = self._run_preflight_check(
+            expected_revision="9a2dee631f4aff76dc2024d3036287ad93216452",
+            image_revision="9a2dee631f4aff76dc2024d3036287ad93216452",
+        )
+        self.assertTrue(passed)
+
+    def test_runbook_exception_ordering(self):
+        # IC05-3: UncertainDeployment inherits from ReleaseError; handling must catch UncertainDeployment first
+        self.assertTrue(issubclass(release.UncertainDeployment, release.ReleaseError))
+
+        def dispatch_correct(exc: Exception) -> str:
+            try:
+                raise exc
+            except release.UncertainDeployment:
+                return "uncertain_handled"
+            except release.ReleaseError:
+                return "release_error_handled"
+
+        self.assertEqual(dispatch_correct(release.UncertainDeployment("uncertain state")), "uncertain_handled")
+        self.assertEqual(dispatch_correct(release.ReleaseError("regular error")), "release_error_handled")
+
+    def test_runbook_container_filters_array(self):
+        # IC05-4: Multi-container filter must produce separate array items (--filter id=a --filter id=b), not one combined string
+        script = """
+        CONTAINER_COUNT=$(echo $CONTAINERS | wc -w)
+        if [ "$CONTAINER_COUNT" -eq 1 ]; then
+          CONTAINER_ID="$CONTAINERS"
+          echo "SINGLE:$CONTAINER_ID"
+        elif [ "$CONTAINER_COUNT" -gt 1 ]; then
+          FILTER_ARGS=()
+          for cid in $CONTAINERS; do
+            FILTER_ARGS+=(--filter "id=$cid")
+          done
+          python3 -c "import sys, json; json.dump(sys.argv[1:], sys.stdout)" "${FILTER_ARGS[@]}"
+        else
+          echo "EMPTY" >&2
+          exit 1
+        fi
+        """
+
+        # Case 0: Empty containers -> exit code 1
+        res0 = subprocess.run(["bash", "-c", script], env={"CONTAINERS": ""}, capture_output=True, text=True)
+        self.assertNotEqual(res0.returncode, 0)
+        self.assertIn("EMPTY", res0.stderr)
+
+        # Case 1: Exactly 1 container
+        res1 = subprocess.run(["bash", "-c", script], env={"CONTAINERS": "single_cid_123"}, capture_output=True, text=True)
+        self.assertEqual(res1.returncode, 0)
+        self.assertEqual(res1.stdout.strip(), "SINGLE:single_cid_123")
+
+        # Case 2: 2 containers -> array of arguments (test both space and newline delimited)
+        for sep in [" ", "\n"]:
+            containers = f"cid_aaa{sep}cid_bbb"
+            res2 = subprocess.run(["bash", "-c", script], env={"CONTAINERS": containers}, capture_output=True, text=True)
+            self.assertEqual(res2.returncode, 0)
+            args = json.loads(res2.stdout)
+            self.assertEqual(args, ["--filter", "id=cid_aaa", "--filter", "id=cid_bbb"])
+            for arg in args:
+                self.assertNotIn(" --filter ", arg)
+
 

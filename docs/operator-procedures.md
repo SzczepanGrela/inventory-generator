@@ -48,8 +48,8 @@ Mechanizm wycofania (*rollback*) zapewnia przywrócenie poprzedniej znanej, stab
   1. Sprawdzenie braku aktywnych i niepewnych wdrożeń (`verify_no_running_deployment`).
   2. Przywrócenie poprzedniego tagu obrazu w Coolify (`client.update_tag`) i weryfikacja kontraktu.
   3. Kolejkowanie wdrożenia i odpytywanie jego statusu (budżet `--deployment-timeout`, domyślnie 300s/600s, z równoległą sondą publiczną i natychmiastowym anulowaniem do 60s przy 3 kolejnych błędach).
-  4. Oczekiwanie na ustabilizowanie się poprzedniej rewizji publicznej (do 30 prób co 2s = 60s na 3 kolejne zgodne odczyty przez `wait_for_revision`).
-  5. Oczekiwanie na stan zdrowia kontenera w Coolify (do 30 prób co 2s = 60s przez `wait_for_healthy_application`).
+  4. Oczekiwanie na ustabilizowanie się poprzedniej rewizji publicznej: do 30 prób co 2s na 3 kolejne zgodne odczyty przez `wait_for_revision` (rzeczywisty budżet fazy: od min. 60s do maks. ok. 360s z uwzględnieniem 10s timeoutu żądań sieciowych w `read_public_revision`).
+  5. Oczekiwanie na stan zdrowia kontenera w Coolify: do 30 prób co 2s przez `wait_for_healthy_application` (rzeczywisty budżet fazy: od min. 60s do maks. ok. 360s z uwzględnieniem 10s timeoutu zapytań do Coolify API).
   6. Weryfikacja bazowego endpointu zdrowia (`check_public_baseline`).
 
 ### 2.1. Automatyczny Rollback w `coolify_release.py`
@@ -65,17 +65,31 @@ Skrypt automatycznie przywraca poprzedni tag obrazu (`previous_tag`), weryfikuje
 Jeżeli automatyczny proces zawiedzie lub wymagane jest ręczne wycofanie wersji produkcyjnej, operator dysponuje dwoma ścieżkami:
 
 #### Opcja A (Zalecana i Podstawowa): Serializowane Wycofanie przez GitHub Actions
-Jest to **rekomendowana i bezpieczna ścieżka**. Workflow `deploy.yml` korzysta z grupy współbieżności `concurrency: group: production, cancel-in-progress: false`, co zapobiega równoległym wdrożeniom i wyścigom promocji, a także egzekwuje bramki środowiskowe `production`:
+Jest to **rekomendowana i bezpieczna ścieżka**. Workflow `deploy.yml` korzysta z grupy współbieżności `concurrency: group: production, cancel-in-progress: false`, co zapobiega równoległym wdrożeniom i wyścigom promocji, a także egzekwuje bramki środowiskowe `production` (wymóg manualnego zatwierdzenia przez operatora przed wejściem do fazy produkcyjnej):
 
 ```bash
+# Weryfikacja etykiety rewizji w obrazie przed wywołaniem (opcjonalnie z poziomu CLI)
+gh attestation verify oci://ghcr.io/szczepangrela/inventory-generator@sha256:<PREVIOUS_STABLE_DIGEST> \
+  --repo SzczepanGrela/inventory-generator
+
+# Wywołanie workflow z przekazaniem digestu oraz docelowej rewizji
 gh workflow run deploy.yml \
   --ref main \
   -f digest="sha256:<PREVIOUS_STABLE_DIGEST>" \
   -f expected_revision="<PREVIOUS_STABLE_COMMIT_SHA>"
 ```
 
-#### Opcja B (Awaryjna Interwencja Bezpośrednia): Coolify API z Wykluczeniem Równoległych Wdrożeń
-W sytuacji awarii lub niedostępności GitHub Actions operator może wykonać rollback bezpośrednio przez Coolify API. **ZAKAZUJE SIĘ bezpośredniego, bezwarunkowego wywoływania mutacji bez sprawdzenia stanu aktywnych wdrożeń** – helper `rollback()` natychmiast podmienia tag i kolejkuje wdrożenie, co w przypadku trwającego wdrożenia doprowadzi do wyścigu i niespójności środowiska.
+**Weryfikacja i obsługa bramki świeżości (freshness gate):**
+- Krok preflight weryfikuje atestację SLSA oraz zgodność etykiety `org.opencontainers.image.revision` z podaną wartością `expected_revision`. W razie niezgodności proces kończy się natychmiastowym błędem.
+- Bramka świeżości (`freshness`) rozróżnia automatyczne wywołania (`workflow_call` – gdzie niezgodność `main_revision != EXPECTED_REVISION` oznacza nieaktualny build i pomija wdrożenie `deploy=false`) od celowych, manualnych dyspozycji operatora (`workflow_dispatch`). Przy manualnym wywołaniu zamierzony powrót do starszej rewizji nie jest pomijany jako stale (`deploy=true`), przy pełnym zachowaniu weryfikacji etykiety i blokady współbieżności `concurrency: production`.
+- Alternatywnie operator może pominąć parametr `expected_revision` (pozostawiając wartość domyślną pustą), co spowoduje odczytanie i weryfikację docelowej rewizji bezpośrednio ze zweryfikowanej etykiety kontenera w kroku preflight.
+
+#### Opcja B (Awaryjna Interwencja Bezpośrednia): Coolify API przy Zamrożeniu Promocji
+W sytuacji całkowitej awarii lub niedostępności GitHub Actions operator może wykonać rollback bezpośrednio przez Coolify API.
+
+> [!CAUTION]
+> **UWAGA DOTYCZĄCA WSPÓŁBIEŻNOŚCI I BRAKU BLOKADY:**
+> Sam odczyt historii wdrożeń z Coolify API (`verify_no_running_deployment`) **NIE** stanowi blokady (locka) ani serializacji wydań. Trwający workflow GitHub Actions może oczekiwać na zatwierdzenie środowiskowe (manual approval) lub preflight zanim pojawi się wpis w Coolify. Z tego względu bezpośrednia interwencja wymaga skoordynowanego zamrożenia wdrożeń (*operational promotional freeze*) – operator musi jawnie potwierdzić wyłączność (brak równoległych pipeline'ów CI, brak innych operatorów) przez **całe okno operacji**.
 
 Przed wykonaniem mutacji operator **musi** potwierdzić, że wszystkie wcześniejsze wdrożenia osiągnęły stan terminalny (`finished`, `failed`, `cancelled`). W razie wykrycia aktywnego wdrożenia (`queued`, `in_progress`) należy je anulować i poczekać na zakończenie. W razie stanu nieznanego (*uncertain*) – **zatrzymać się i zbadać przyczynę w Coolify**, nigdy nie kolejkować drugiego wdrożenia w ciemno.
 
@@ -97,11 +111,11 @@ app_uuid = "<APPLICATION_UUID>"
 print("Weryfikacja stanu wdrożeń w Coolify API...")
 try:
     verify_no_running_deployment(client, app_uuid)
-except ReleaseError as e:
-    print(f"BŁĄD: Wykryto trwające wdrożenie ({e}). Zbadaj i anuluj przed rollbackiem!", file=sys.stderr)
-    sys.exit(1)
 except UncertainDeployment as e:
     print(f"BŁĄD: Niejednoznaczny status wdrożenia ({e}). ZATRZYMAJ SIĘ i sprawdź dashboard Coolify!", file=sys.stderr)
+    sys.exit(1)
+except ReleaseError as e:
+    print(f"BŁĄD: Wykryto trwające wdrożenie ({e}). Zbadaj i anuluj przed rollbackiem!", file=sys.stderr)
     sys.exit(1)
 
 # 2. Sprawdzenie zgodności kontraktu zasobu przed mutacją
@@ -160,14 +174,18 @@ else
   CONTAINERS=$(docker ps -q --filter "name=^/<APPLICATION_UUID>" --filter "status=running")
 fi
 
-CONTAINER_COUNT=$(echo "$CONTAINERS" | grep -v '^$' | wc -l)
+CONTAINER_COUNT=$(echo $CONTAINERS | wc -w)
 
 if [ "$CONTAINER_COUNT" -eq 1 ]; then
   CONTAINER_ID="$CONTAINERS"
   echo "Aktywny pojedynczy kontener produkcyjny: $CONTAINER_ID"
 elif [ "$CONTAINER_COUNT" -gt 1 ]; then
   echo "Wykryto $CONTAINER_COUNT aktywnych kontenerów (rolling overlap lub dryf stanu):" >&2
-  docker ps --filter "id=$(echo $CONTAINERS | sed 's/ / --filter id=/g')" --format "table {{.ID}}\t{{.Names}}\t{{.CreatedAt}}\t{{.Status}}"
+  FILTER_ARGS=()
+  for cid in $CONTAINERS; do
+    FILTER_ARGS+=(--filter "id=$cid")
+  done
+  docker ps "${FILTER_ARGS[@]}" --format "table {{.ID}}\t{{.Names}}\t{{.CreatedAt}}\t{{.Status}}"
   echo "Wybierz docelowy CONTAINER_ID ręcznie przed wykonaniem inspekcji." >&2
   exit 1
 else
@@ -239,7 +257,9 @@ docker stats --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}
 
 # Terminal 3: Monitorowanie sąsiadującej aplikacji TicTacToe (tictactoe.grela.dev)
 # Żądania ograniczone limitami czasowymi (--connect-timeout 2, --max-time 5)
-# oraz skończoną liczbą iteracji (30 prób co 2s = 60s łącznego okna pomiarowego)
+# oraz skończoną liczbą 30 iteracji co 2s.
+# Rzeczywisty budżet czasowy: 30 prób × (do 5s na żądanie HTTP + 2s sleep)
+# = od minimum ok. 60s (przy natychmiastowych odpowiedziach) do maksymalnie ok. 210s (~3,5 min) przy wyczerpywaniu limitu czasu.
 for i in $(seq 1 30); do
   STATUS=$(curl -o /dev/null -s -w "%{http_code} %{time_total}s\n" \
     --connect-timeout 2 --max-time 5 \
