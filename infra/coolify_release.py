@@ -272,13 +272,15 @@ def verify_no_running_deployment(
     client: CoolifyClient,
     application_uuid: str,
 ) -> None:
-    conflicts = [
-        deployment
-        for deployment in client.list_application_deployments(application_uuid)
-        if deployment.get("status") in ACTIVE_DEPLOYMENT_STATUSES
-    ]
-    if conflicts:
-        raise ReleaseError("another Coolify deployment is already running")
+    terminal_statuses = {"finished"} | FAILED_DEPLOYMENT_STATUSES
+    for deployment in client.list_application_deployments(application_uuid):
+        status = deployment.get("status")
+        if status in ACTIVE_DEPLOYMENT_STATUSES:
+            raise ReleaseError("another Coolify deployment is already running")
+        if status not in terminal_statuses:
+            raise UncertainDeployment(
+                f"Coolify returned unknown deployment status {status!r}; stopping mutation"
+            )
 
 
 def wait_for_healthy_application(
@@ -535,6 +537,7 @@ def rollback(
     interval: float,
     health_attempts: int,
 ) -> str:
+    verify_no_running_deployment(client, application_uuid)
     print("Restoring the previous production digest.", file=sys.stderr)
     client.update_tag(application_uuid, previous_tag)
     restored = client.get_application(application_uuid)

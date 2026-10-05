@@ -514,3 +514,67 @@ class TestCoolifyReleaseEdgeCases(unittest.TestCase):
         mock_open.side_effect = fake_open
         smokecheck._check_attributes("http://localhost:8080", timeout=5)
         smokecheck._check_exports("http://localhost:8080", timeout=5)
+
+    def test_rollback_stops_on_active_deployment(self):
+        client = FakeClient(sample_contract(), [])
+        client.application_deployments = [{"status": "in_progress"}]
+        contract = sample_contract()
+        with self.assertRaises(release.ReleaseError) as ctx:
+            release.rollback(
+                client=client,
+                application_uuid=APPLICATION_UUID,
+                previous_tag=release.digest_to_tag(OLD_DIGEST),
+                previous_revision=OLD_REVISION,
+                failed_revision=NEW_REVISION,
+                contract=contract,
+                public_url="https://inventory-generator.grela.dev",
+                timeout=5,
+                interval=0.001,
+                health_attempts=3,
+            )
+        self.assertIn("another Coolify deployment is already running", str(ctx.exception))
+        # Ensure no mutation occurred
+        self.assertEqual(client.updates, [])
+        self.assertEqual(client.queued, [])
+
+    def test_rollback_stops_on_unknown_deployment_status(self):
+        client = FakeClient(sample_contract(), [])
+        client.application_deployments = [{"status": "unexpected-custom-state"}]
+        contract = sample_contract()
+        with self.assertRaises(release.UncertainDeployment) as ctx:
+            release.rollback(
+                client=client,
+                application_uuid=APPLICATION_UUID,
+                previous_tag=release.digest_to_tag(OLD_DIGEST),
+                previous_revision=OLD_REVISION,
+                failed_revision=NEW_REVISION,
+                contract=contract,
+                public_url="https://inventory-generator.grela.dev",
+                timeout=5,
+                interval=0.001,
+                health_attempts=3,
+            )
+        self.assertIn("unknown deployment status", str(ctx.exception))
+        # Ensure no mutation occurred
+        self.assertEqual(client.updates, [])
+        self.assertEqual(client.queued, [])
+
+    def test_verify_no_running_deployment_offline_states(self):
+        client = FakeClient(sample_contract(), [])
+        # Terminal statuses pass without error
+        for terminal_status in ["finished", "failed", "cancelled", "cancelled-by-user"]:
+            client.application_deployments = [{"status": terminal_status}]
+            release.verify_no_running_deployment(client, APPLICATION_UUID)
+
+        # Active statuses raise ReleaseError
+        for active_status in ["queued", "in_progress"]:
+            client.application_deployments = [{"status": active_status}]
+            with self.assertRaises(release.ReleaseError):
+                release.verify_no_running_deployment(client, APPLICATION_UUID)
+
+        # Unknown / non-terminal statuses raise UncertainDeployment
+        for unknown_status in ["pending_approval", "unknown", "initializing"]:
+            client.application_deployments = [{"status": unknown_status}]
+            with self.assertRaises(release.UncertainDeployment):
+                release.verify_no_running_deployment(client, APPLICATION_UUID)
+

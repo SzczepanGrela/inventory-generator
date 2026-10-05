@@ -2,7 +2,7 @@
 
 Dokument określa procedury weryfikacji wydania, wycofania (rollback), inspekcji środowiska uruchomieniowego (*effective-runtime readback*) oraz protokół pomiaru nakładania się kontenerów (*rolling overlap*) na współdzielonym serwerze VPS.
 
-Zgodnie z decyzją architektoniczną `docs/decisions/2026-10-03-inventory-process-local-limits.md` oraz wytycznymi koordynatora, **wszelkie testy obciążeniowe i awaryjne na współdzielonym VPS wymagają skoordynowanego okna operacyjnego, aktywnych progów zatrzymania (stop thresholds) oraz zapisanego stabilnego wydania bazowego**.
+Zgodnie z decyzją architektoniczną `docs/decisions/2026-10-03-inventory-process-local-limits.md` (w prywatnym repozytorium infrastruktury `SzczepanGrela/grela-dev-infrastructure`) oraz wytycznymi koordynatora, **wszelkie testy obciążeniowe i awaryjne na współdzielonym VPS wymagają skoordynowanego okna operacyjnego, aktywnych progów zatrzymania (stop thresholds) oraz zapisanego stabilnego wydania bazowego**.
 
 ---
 
@@ -42,38 +42,77 @@ W przypadku wykrycia niezgodności operator odrzuca wdrożenie w GitHub Actions 
 
 ## 2. Wycofanie po Nieudanych Testach Dymnych (Failed-Smoke Rollback)
 
-Mechanizm wycofania zapewnia przywrócenie poprzedniej znanej, stabilnej wersji w przypadku niepowodzenia wdrożenia. Rollback nie jest procesem natychmiastowym: wymaga zatrzymania wadliwego kontenera, uruchomienia poprzedniego obrazu, weryfikacji punktu zdrowia w ograniczonym oknie czasowym (do 60s) oraz min. 15-sekundowego okna obserwacyjnego (*soak period*).
+Mechanizm wycofania (*rollback*) zapewnia przywrócenie poprzedniej znanej, stabilnej wersji w przypadku niepowodzenia wdrożenia. Należy ściśle odróżnić **standardową promocję wydania** (`deploy_release`) od **awaryjnego wycofania** (`rollback`):
+- **Standardowa promocja (`deploy_release`)**: obejmuje weryfikację kontraktu, odpytywanie wdrożenia Coolify (budżet `--deployment-timeout`, domyślnie 600s), ustabilizowanie nowej rewizji (do 45 prób co 2s na 5 kolejnych zgodnych odczytów), sprawdzenie stanu `running:healthy`, pełne testy dymne (`infra.smokecheck.check_release`) oraz minimum 30-sekundowe okno obserwacyjne (*soak period*: 15 sprawdzeń co 2s przez `soak_release`).
+- **Awaryjny rollback (`rollback`)**: nie jest procesem natychmiastowym, lecz celowo pomija fazę `soak_release`, aby zminimalizować czas przywrócenia stabilnej usługi. Składa się z odrębnych faz o zdefiniowanych limitach czasowych:
+  1. Sprawdzenie braku aktywnych i niepewnych wdrożeń (`verify_no_running_deployment`).
+  2. Przywrócenie poprzedniego tagu obrazu w Coolify (`client.update_tag`) i weryfikacja kontraktu.
+  3. Kolejkowanie wdrożenia i odpytywanie jego statusu (budżet `--deployment-timeout`, domyślnie 300s/600s, z równoległą sondą publiczną i natychmiastowym anulowaniem do 60s przy 3 kolejnych błędach).
+  4. Oczekiwanie na ustabilizowanie się poprzedniej rewizji publicznej (do 30 prób co 2s = 60s na 3 kolejne zgodne odczyty przez `wait_for_revision`).
+  5. Oczekiwanie na stan zdrowia kontenera w Coolify (do 30 prób co 2s = 60s przez `wait_for_healthy_application`).
+  6. Weryfikacja bazowego endpointu zdrowia (`check_public_baseline`).
 
 ### 2.1. Automatyczny Rollback w `coolify_release.py`
 Wbudowany skrypt wdrożeniowy automatycznie wycofuje zmiany w przypadku:
-- Przekroczenia limitu czasu wdrożenia w Coolify (`--deployment-timeout`).
-- 3 kolejnych nieudanych prób odpytania publicznego endpointu zdrowia (`monitor.consecutive_failures >= 3`).
+- Przekroczenia limitu czasu wdrożenia kandydata w Coolify (`--deployment-timeout`).
+- 3 kolejnych nieudanych prób odpytania publicznego endpointu zdrowia w trakcie wdrażania (`monitor.consecutive_failures >= 3`).
 - Niepowodzenia testów dymnych `infra.smokecheck.check_release` po przełączeniu ruchu.
 - Braku ustabilizowania się nowej rewizji w oknie obserwacyjnym (*soak period*).
 
 Skrypt automatycznie przywraca poprzedni tag obrazu (`previous_tag`), weryfikuje stan `running:healthy` oraz sprawdza endpoint `/api/health` dla poprzedniej rewizji `previous_revision`.
 
 ### 2.2. Procedura Manualnego Rollbacku przez Operatora
-Jeżeli automatyczny proces zawiedzie lub wymagane jest natychmiastowe wycofanie ręczne:
+Jeżeli automatyczny proces zawiedzie lub wymagane jest ręczne wycofanie wersji produkcyjnej, operator dysponuje dwoma ścieżkami:
+
+#### Opcja A (Zalecana i Podstawowa): Serializowane Wycofanie przez GitHub Actions
+Jest to **rekomendowana i bezpieczna ścieżka**. Workflow `deploy.yml` korzysta z grupy współbieżności `concurrency: group: production, cancel-in-progress: false`, co zapobiega równoległym wdrożeniom i wyścigom promocji, a także egzekwuje bramki środowiskowe `production`:
 
 ```bash
-# Opcja A: Wycofanie przez ponowne uruchomienie workflow GitHub Actions ze znanym stabilnym SHA
 gh workflow run deploy.yml \
   --ref main \
   -f digest="sha256:<PREVIOUS_STABLE_DIGEST>" \
   -f expected_revision="<PREVIOUS_STABLE_COMMIT_SHA>"
+```
 
-# Opcja B: Bezpośrednie przywrócenie w Coolify API w sytuacji awarii CI/CD
+#### Opcja B (Awaryjna Interwencja Bezpośrednia): Coolify API z Wykluczeniem Równoległych Wdrożeń
+W sytuacji awarii lub niedostępności GitHub Actions operator może wykonać rollback bezpośrednio przez Coolify API. **ZAKAZUJE SIĘ bezpośredniego, bezwarunkowego wywoływania mutacji bez sprawdzenia stanu aktywnych wdrożeń** – helper `rollback()` natychmiast podmienia tag i kolejkuje wdrożenie, co w przypadku trwającego wdrożenia doprowadzi do wyścigu i niespójności środowiska.
+
+Przed wykonaniem mutacji operator **musi** potwierdzić, że wszystkie wcześniejsze wdrożenia osiągnęły stan terminalny (`finished`, `failed`, `cancelled`). W razie wykrycia aktywnego wdrożenia (`queued`, `in_progress`) należy je anulować i poczekać na zakończenie. W razie stanu nieznanego (*uncertain*) – **zatrzymać się i zbadać przyczynę w Coolify**, nigdy nie kolejkować drugiego wdrożenia w ciemno.
+
+```bash
 python3 -c '
+import sys
 from pathlib import Path
-from infra.coolify_release import CoolifyClient, load_contract, rollback, token_from_environment
+from infra.coolify_release import (
+    CoolifyClient, load_contract, rollback, verify_application,
+    verify_no_running_deployment, token_from_environment,
+    ReleaseError, UncertainDeployment
+)
 
 client = CoolifyClient("https://coolify.internal.grela.dev", token_from_environment())
 contract = load_contract(Path("infra/coolify-production.json"))
+app_uuid = "<APPLICATION_UUID>"
 
+# 1. Sprawdzenie stanu istniejących wdrożeń (ochrona przed wyścigiem)
+print("Weryfikacja stanu wdrożeń w Coolify API...")
+try:
+    verify_no_running_deployment(client, app_uuid)
+except ReleaseError as e:
+    print(f"BŁĄD: Wykryto trwające wdrożenie ({e}). Zbadaj i anuluj przed rollbackiem!", file=sys.stderr)
+    sys.exit(1)
+except UncertainDeployment as e:
+    print(f"BŁĄD: Niejednoznaczny status wdrożenia ({e}). ZATRZYMAJ SIĘ i sprawdź dashboard Coolify!", file=sys.stderr)
+    sys.exit(1)
+
+# 2. Sprawdzenie zgodności kontraktu zasobu przed mutacją
+app = client.get_application(app_uuid)
+verify_application(app, contract, app_uuid, require_healthy=False)
+
+# 3. Bezpieczne wykonanie procedury rollback
+print("Rozpoczynanie kontrolowanego rollbacku...")
 rollback(
     client=client,
-    application_uuid="<APPLICATION_UUID>",
+    application_uuid=app_uuid,
     previous_tag="sha256-<PREVIOUS_STABLE_DIGEST_HEX>",
     previous_revision="<PREVIOUS_STABLE_COMMIT_SHA>",
     failed_revision="<FAILED_COMMIT_SHA>",
@@ -103,20 +142,33 @@ python3 -m infra.smokecheck --base-url https://inventory-generator.grela.dev --e
 Deklaracje w plikach konfiguracyjnych muszą odpowiadać rzeczywistym parametrom kontenera uruchomionego na serwerze VPS. Poniższe polecenia weryfikują stan faktyczny (*effective state*):
 
 ### 3.1. Identyfikacja aktywnego kontenera:
-Podczas standardowej pracy w Coolify działa dokładnie jeden kontener aplikacji. W trakcie procedury rolling update mogą chwilowo istnieć 2 kontenery (nakładanie instancji). Poniższa procedura jednoznacznie identyfikuje instancję i zapobiega niejednoznaczności:
+Podczas standardowej pracy w Coolify działa dokładnie jeden kontener aplikacji. W trakcie procedury rolling update mogą chwilowo istnieć 2 kontenery (nakładanie instancji).
+
+Etykieta `coolify.applicationId` w Coolify 4.3.14 przechowuje **wewnętrzny numeryczny identyfikator bazy danych (integer)**, a nie UUID zasobu. Wyszukiwanie kontenera realizowane jest przez jednoznaczny odczyt numerycznego ID z Coolify API lub przez prefiks nazwy kontenera generowanej przez Coolify (`<APPLICATION_UUID>`):
 
 ```bash
-# Wyszukanie aktywnych kontenerów zasobu w Coolify
-CONTAINERS=$(docker ps -q --filter "label=coolify.applicationId=<APPLICATION_UUID>" --filter "status=running")
+# Metoda 1 (Zalecana): Pobranie rzeczywistego numerycznego ID aplikacji z Coolify API
+APP_NUMERIC_ID=$(curl -s -f -H "Authorization: Bearer $COOLIFY_TOKEN" \
+  https://coolify.internal.grela.dev/api/v1/applications/<APPLICATION_UUID> | jq -r '.id // empty')
+
+if [ -n "$APP_NUMERIC_ID" ] && [ "$APP_NUMERIC_ID" != "null" ]; then
+  echo "Zidentyfikowano numeryczne ID aplikacji: $APP_NUMERIC_ID"
+  CONTAINERS=$(docker ps -q --filter "label=coolify.applicationId=${APP_NUMERIC_ID}" --filter "status=running")
+else
+  # Metoda 2 (Fallback): Jednoznaczne dopasowanie po prefiksie nazwy kontenera dla danego UUID zasobu
+  echo "Brak odpowiedzi API Coolify - wyszukiwanie po prefiksie nazwy kontenera dla UUID zasobu..."
+  CONTAINERS=$(docker ps -q --filter "name=^/<APPLICATION_UUID>" --filter "status=running")
+fi
+
 CONTAINER_COUNT=$(echo "$CONTAINERS" | grep -v '^$' | wc -l)
 
 if [ "$CONTAINER_COUNT" -eq 1 ]; then
   CONTAINER_ID="$CONTAINERS"
   echo "Aktywny pojedynczy kontener produkcyjny: $CONTAINER_ID"
 elif [ "$CONTAINER_COUNT" -gt 1 ]; then
-  echo "Wykryto $CONTAINER_COUNT aktywnych kontenerów (rolling overlap lub dryf stanu):"
-  docker ps --filter "label=coolify.applicationId=<APPLICATION_UUID>" --format "table {{.ID}}\t{{.Names}}\t{{.CreatedAt}}\t{{.Status}}"
-  echo "Wybierz docelowy CONTAINER_ID ręcznie przed wykonaniem inspekcji."
+  echo "Wykryto $CONTAINER_COUNT aktywnych kontenerów (rolling overlap lub dryf stanu):" >&2
+  docker ps --filter "id=$(echo $CONTAINERS | sed 's/ / --filter id=/g')" --format "table {{.ID}}\t{{.Names}}\t{{.CreatedAt}}\t{{.Status}}"
+  echo "Wybierz docelowy CONTAINER_ID ręcznie przed wykonaniem inspekcji." >&2
   exit 1
 else
   echo "BŁĄD: Brak uruchomionych kontenerów dla aplikacji <APPLICATION_UUID>!" >&2
@@ -162,7 +214,7 @@ curl -s https://inventory-generator.grela.dev/api/health
 
 ## 4. Protokół Pomiaru Nakładania się Instancji (Measured Rolling Overlap Protocol)
 
-Zgodnie z `docs/decisions/2026-10-03-inventory-process-local-limits.md`, Inventory Generator korzysta z lokalnych dla procesu liczników rate limitera (token bucket: pojemność 10 jednostek kosztu, uzupełnianie 1/6s) oraz semafora współbieżności eksportu (maksymalnie 3 równoległe sloty obejmujące wszystkie formaty: DOCX, CSV i HTML, z natychmiastowym odrzuceniem no-wait HTTP 429 Retry-After: 1). 
+Zgodnie z `docs/decisions/2026-10-03-inventory-process-local-limits.md` (w prywatnym repozytorium infrastruktury `SzczepanGrela/grela-dev-infrastructure`), Inventory Generator korzysta z lokalnych dla procesu liczników rate limitera (token bucket: pojemność 10 jednostek kosztu, uzupełnianie 1/6s) oraz semafora współbieżności eksportu (maksymalnie 3 równoległe sloty obejmujące wszystkie formaty: DOCX, CSV i HTML, z natychmiastowym odrzuceniem no-wait HTTP 429 Retry-After: 1). 
 
 Podczas aktualizacji typu *rolling update* przez krótki czas (zwykle 10–30 sekund) mogą działać równolegle dwa kontenery (stary i nowy). Oznacza to potencjalne chwilowe podwojenie dopuszczalnego obciążenia procesora i pamięci (do 6 slotów i podwójnej sterty).
 
@@ -185,11 +237,15 @@ vmstat 1
 # Terminal 2: Wykorzystanie CPU i pamięci przez kontenery Docker
 docker stats --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}"
 
-# Terminal 3: Ciągły test dymny sąsiadującej aplikacji TicTacToe (tictactoe.grela.dev)
-while true; do
-  STATUS=$(curl -o /dev/null -s -w "%{http_code} %{time_total}s\n" https://tictactoe.grela.dev)
-  echo "$(date -u +%T) TTT status: $STATUS"
-  sleep 1
+# Terminal 3: Monitorowanie sąsiadującej aplikacji TicTacToe (tictactoe.grela.dev)
+# Żądania ograniczone limitami czasowymi (--connect-timeout 2, --max-time 5)
+# oraz skończoną liczbą iteracji (30 prób co 2s = 60s łącznego okna pomiarowego)
+for i in $(seq 1 30); do
+  STATUS=$(curl -o /dev/null -s -w "%{http_code} %{time_total}s\n" \
+    --connect-timeout 2 --max-time 5 \
+    https://tictactoe.grela.dev)
+  echo "$(date -u +%T) [próba $i/30] TTT status: $STATUS"
+  sleep 2
 done
 ```
 
