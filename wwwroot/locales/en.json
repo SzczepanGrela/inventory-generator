@@ -77,6 +77,7 @@
   "toast_rate_limited": "Export rate limit exceeded. Please wait ",
   "toast_payload_too_large": "Payload exceeds maximum allowed size of 2 MB.",
   "toast_storage_full": "Browser storage quota exceeded. Please export project JSON and clear old records.",
+  "toast_storage_error": "Browser storage save error",
   "toast_cache_corrupted": "Problem detected with cached data. Your raw data has been preserved against overwrite.",
   "toast_defaults_restored": "Data reset to default template.",
   "toast_reset_failed": "Failed to fetch default template. Data was not reset.",
@@ -84,7 +85,14 @@
   "toast_temporary_session": "Continuing in temporary mode (local storage remains protected).",
   "recovery_banner_text": "Temporary mode: cached data is preserved against overwrite.",
   "recovery_banner_btn": "Recovery options",
+  "recovery_modal_title": "Problem detected with saved project",
+  "recovery_modal_desc": "Cached project data in browser storage could not be safely loaded. Your data has <strong>not been deleted</strong> from cache.",
+  "recovery_modal_hint": "You can download an emergency JSON backup or explicitly reset the project to default template.",
+  "btn_recovery_download": "Download emergency backup (JSON)",
+  "btn_recovery_reset": "Reset to defaults",
+  "btn_recovery_dismiss": "Keep in memory only",
   "aria_close_modal": "Close modal",
   "aria_theme_toggle": "Toggle light/dark theme",
-  "aria_settings_toggle": "Column and attribute settings"
+  "aria_settings_toggle": "Column and attribute settings",
+  "aria_recovery_banner_btn": "Open data recovery options"
 }

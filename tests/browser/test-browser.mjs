@@ -526,6 +526,260 @@ try {
 
   await freshContext.close();
 
+  // 7F: IC05-1 Failed 2nd storage write during reset preserves complete original and rolls back
+  console.log("Subtest 7F: Failed 2nd write (inventory_products) during reset preserves complete original...");
+  const fContext = await browser.newContext();
+  const fPage = await fContext.newPage({ viewport: { width: 1280, height: 800 } });
+  await fPage.goto(baseUrl, { waitUntil: "networkidle" });
+  
+  const synthetic5001F = JSON.stringify(Array.from({ length: 5001 }, (_, i) => ({
+    id: i + 1,
+    attributes: { Col1: `Row${i + 1}` }
+  })));
+  const origAttrsF = JSON.stringify([{ name: "Col1", type: "String" }]);
+
+  await fPage.evaluate(([attrs, prods]) => {
+    localStorage.setItem("inventory_attributes", attrs);
+    localStorage.setItem("inventory_products", prods);
+  }, [origAttrsF, synthetic5001F]);
+
+  await fPage.reload({ waitUntil: "networkidle" });
+  await fPage.waitForSelector("#recovery-modal:not(.hide)");
+
+  // Inject failure on localStorage.setItem for 'inventory_products' (the 2nd write)
+  await fPage.evaluate(() => {
+    const originalSetItem = localStorage.setItem.bind(localStorage);
+    window.__setItemFailProducts = true;
+    localStorage.setItem = function(key, val) {
+      if (window.__setItemFailProducts && key === 'inventory_products') {
+        const err = new Error('Quota exceeded');
+        err.name = 'QuotaExceededError';
+        err.code = 22;
+        throw err;
+      }
+      return originalSetItem(key, val);
+    };
+  });
+
+  // Attempt to reset to defaults
+  await fPage.click("#recovery-reset-btn");
+
+  // Storage full error toast must appear
+  const fToastLocator = fPage.locator(".toast-error .toast-message", { hasText: /pełna|quota|Storage error|Błąd zapisu/i });
+  await fToastLocator.waitFor({ state: "visible" });
+  const fToastText = await fToastLocator.textContent();
+  assert(fToastText.includes("pełna") || fToastText.includes("quota") || fToastText.includes("Storage error") || fToastText.includes("Błąd zapisu"), `Expected storage error toast, got: ${fToastText}`);
+
+  // Crucial: NO success toast must appear!
+  const hasSuccessToastF = await fPage.locator(".toast-info, .toast-success").count();
+  assert(hasSuccessToastF === 0, "No success/info toast should be shown on storage failure");
+
+  // Crucial: Recovery modal MUST still be visible!
+  const fModalVisible = await fPage.locator("#recovery-modal").isVisible();
+  assert(fModalVisible, "Recovery modal must remain visible after failed reset");
+
+  // Crucial: Storage must be completely rolled back (both attributes and products intact!)
+  const fAttrsAfterFail = await fPage.evaluate(() => localStorage.getItem("inventory_attributes"));
+  const fProdsAfterFail = await fPage.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(fAttrsAfterFail === origAttrsF, "Attributes must be rolled back to original on partial write failure");
+  assert(fProdsAfterFail === synthetic5001F, "Products must remain original 5001 rows on write failure");
+
+  // Reload the page: recovery state must survive reload!
+  await fPage.reload({ waitUntil: "networkidle" });
+  await fPage.waitForSelector("#recovery-modal:not(.hide)");
+  const fModalAfterReload = await fPage.locator("#recovery-modal").isVisible();
+  assert(fModalAfterReload, "Recovery modal must still appear upon reload after failed reset");
+
+  // Download recovery backup and verify all 5001 rows are intact
+  const [fRecDownload] = await Promise.all([
+    fPage.waitForEvent("download"),
+    fPage.click("#recovery-download-btn")
+  ]);
+  const fChunks = [];
+  for await (const chunk of await fRecDownload.createReadStream()) {
+    fChunks.push(chunk);
+  }
+  const fRecParsed = JSON.parse(Buffer.concat(fChunks).toString("utf-8"));
+  assert(fRecParsed.products?.length === 5001, `Recovery backup must still contain 5001 rows, got ${fRecParsed.products?.length}`);
+
+  // Clear injected failure and retry reset: must succeed!
+  await fPage.evaluate(() => {
+    window.__setItemFailProducts = false;
+  });
+  await fPage.click("#recovery-reset-btn");
+  await fPage.waitForSelector("#recovery-modal", { state: "hidden" });
+  const fSuccessToast = await fPage.locator(".toast-info .toast-message").last().textContent();
+  assert(fSuccessToast.includes("Zresetowano") || fSuccessToast.includes("reset"), `Expected reset success toast, got ${fSuccessToast}`);
+  const fProdsAfterSuccess = await fPage.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(fProdsAfterSuccess === "[]", "Products should now be reset to empty array []");
+
+  await fContext.close();
+
+  // 7G: IC05-1 Failed 2nd storage write during valid import preserves complete original
+  console.log("Subtest 7G: Failed 2nd write (inventory_products) during valid import preserves complete original...");
+  const gContext = await browser.newContext();
+  const gPage = await gContext.newPage({ viewport: { width: 1280, height: 800 } });
+  await gPage.goto(baseUrl, { waitUntil: "networkidle" });
+
+  await gPage.evaluate(([attrs, prods]) => {
+    localStorage.setItem("inventory_attributes", attrs);
+    localStorage.setItem("inventory_products", prods);
+  }, [origAttrsF, synthetic5001F]);
+
+  await gPage.reload({ waitUntil: "networkidle" });
+  await gPage.waitForSelector("#recovery-modal:not(.hide)");
+
+  // Temporarily dismiss recovery modal -> banner is shown
+  await gPage.click("#recovery-dismiss-btn");
+  await gPage.waitForSelector("#recovery-modal", { state: "hidden" });
+  const gBannerVisible = await gPage.locator("#recovery-banner").isVisible();
+  assert(gBannerVisible, "Recovery banner must be visible after temporary dismissal");
+
+  // Inject failure on localStorage.setItem for 'inventory_products'
+  await gPage.evaluate(() => {
+    const originalSetItem = localStorage.setItem.bind(localStorage);
+    window.__setItemFailProducts = true;
+    localStorage.setItem = function(key, val) {
+      if (window.__setItemFailProducts && key === 'inventory_products') {
+        const err = new Error('Quota exceeded');
+        err.name = 'QuotaExceededError';
+        err.code = 22;
+        throw err;
+      }
+      return originalSetItem(key, val);
+    };
+  });
+
+  // Attempt import of valid JSON
+  const validImportPayload = {
+    attributes: [{ name: "ImportedCol", type: "String" }],
+    products: [{ id: 1, attributes: { ImportedCol: "Value1" } }]
+  };
+  await gPage.setInputFiles("#import-json-file", {
+    name: "valid-import.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(validImportPayload), "utf-8")
+  });
+
+  // Storage error toast must appear
+  const gToastLocator = gPage.locator(".toast-error .toast-message", { hasText: /pełna|quota|Storage error|Błąd zapisu/i });
+  await gToastLocator.waitFor({ state: "visible" });
+  const gToastText = await gToastLocator.textContent();
+  assert(gToastText.includes("pełna") || gToastText.includes("quota") || gToastText.includes("Storage error") || gToastText.includes("Błąd zapisu"), `Expected storage error toast on import, got ${gToastText}`);
+
+  // Crucial: NO import success toast!
+  const gSuccessToasts = await gPage.locator(".toast-success").count();
+  assert(gSuccessToasts === 0, "No success toast should be shown when storage write fails during import");
+
+  // Crucial: Recovery banner must STILL be visible!
+  const gBannerAfterFail = await gPage.locator("#recovery-banner").isVisible();
+  assert(gBannerAfterFail, "Recovery banner must remain visible when import fails to persist");
+
+  // Crucial: Storage must be completely rolled back (5001 rows and original attributes intact!)
+  const gAttrsAfterFail = await gPage.evaluate(() => localStorage.getItem("inventory_attributes"));
+  const gProdsAfterFail = await gPage.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(gAttrsAfterFail === origAttrsF, "Attributes must remain original on partial import write failure");
+  assert(gProdsAfterFail === synthetic5001F, "Products must remain original 5001 rows on partial import write failure");
+
+  // Clear injected failure and retry import
+  await gPage.evaluate(() => {
+    window.__setItemFailProducts = false;
+  });
+  await gPage.setInputFiles("#import-json-file", {
+    name: "valid-import.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(validImportPayload), "utf-8")
+  });
+  await gPage.waitForSelector(".toast-success");
+  const gProdsAfterSuccess = await gPage.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(gProdsAfterSuccess.includes("Value1"), "Products should now contain imported item");
+
+  await gContext.close();
+
+  // 7H: IC05-1 Failed 1st storage write during reset preserves complete original
+  console.log("Subtest 7H: Failed 1st write (inventory_attributes) during reset preserves complete original...");
+  const hContext = await browser.newContext();
+  const hPage = await hContext.newPage({ viewport: { width: 1280, height: 800 } });
+  await hPage.goto(baseUrl, { waitUntil: "networkidle" });
+
+  await hPage.evaluate(([attrs, prods]) => {
+    localStorage.setItem("inventory_attributes", attrs);
+    localStorage.setItem("inventory_products", prods);
+  }, [origAttrsF, synthetic5001F]);
+
+  await hPage.reload({ waitUntil: "networkidle" });
+  await hPage.waitForSelector("#recovery-modal:not(.hide)");
+
+  // Inject failure on localStorage.setItem for 'inventory_attributes'
+  await hPage.evaluate(() => {
+    const originalSetItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = function(key, val) {
+      if (key === 'inventory_attributes') {
+        const err = new Error('Quota exceeded');
+        err.name = 'QuotaExceededError';
+        err.code = 22;
+        throw err;
+      }
+      return originalSetItem(key, val);
+    };
+  });
+
+  await hPage.click("#recovery-reset-btn");
+  const hToastLocator = hPage.locator(".toast-error .toast-message", { hasText: /pełna|quota|Storage error|Błąd zapisu/i });
+  await hToastLocator.waitFor({ state: "visible" });
+  const hToastText = await hToastLocator.textContent();
+  assert(hToastText.includes("pełna") || hToastText.includes("quota") || hToastText.includes("Storage error") || hToastText.includes("Błąd zapisu"), `Expected storage error toast, got: ${hToastText}`);
+
+  const hModalVisible = await hPage.locator("#recovery-modal").isVisible();
+  assert(hModalVisible, "Recovery modal must remain visible after failed 1st write");
+
+  const hAttrs = await hPage.evaluate(() => localStorage.getItem("inventory_attributes"));
+  const hProds = await hPage.evaluate(() => localStorage.getItem("inventory_products"));
+  assert(hAttrs === origAttrsF, "Attributes must remain intact on 1st write failure");
+  assert(hProds === synthetic5001F, "Products must remain intact on 1st write failure");
+
+  await hContext.close();
+
+  // 7I: Bilingual recovery dialog and accessible labels
+  console.log("Subtest 7I: Bilingual recovery dialog and accessible labels...");
+  const iContext = await browser.newContext();
+  const iPage = await iContext.newPage({ viewport: { width: 1280, height: 800 } });
+  await iPage.goto(baseUrl, { waitUntil: "networkidle" });
+
+  await iPage.evaluate(() => {
+    localStorage.setItem("inventory_attributes", "invalid-json{{");
+    localStorage.setItem("inventory_products", "[]");
+  });
+  await iPage.reload({ waitUntil: "networkidle" });
+  await iPage.waitForSelector("#recovery-modal:not(.hide)");
+
+  // Switch to English
+  await iPage.evaluate(() => changeLanguage('en'));
+  await iPage.waitForTimeout(150);
+
+  const enTitle = await iPage.locator("#recovery-title").textContent();
+  assert(enTitle.includes("Problem detected with saved project"), `Expected EN title, got: ${enTitle}`);
+  const enDownloadBtn = await iPage.locator("#recovery-download-btn").textContent();
+  assert(enDownloadBtn.includes("Download emergency backup"), `Expected EN download btn, got: ${enDownloadBtn}`);
+  const enResetBtn = await iPage.locator("#recovery-reset-btn").textContent();
+  assert(enResetBtn.includes("Reset to defaults"), `Expected EN reset btn, got: ${enResetBtn}`);
+  const enDismissBtn = await iPage.locator("#recovery-dismiss-btn").textContent();
+  assert(enDismissBtn.includes("Keep in memory only"), `Expected EN dismiss btn, got: ${enDismissBtn}`);
+
+  // Dismiss recovery modal in EN
+  await iPage.click("#recovery-dismiss-btn");
+  await iPage.waitForSelector("#recovery-modal", { state: "hidden" });
+  const enAriaLabel = await iPage.locator("#reopen-recovery-btn").getAttribute("aria-label");
+  assert(enAriaLabel === "Open data recovery options", `Expected EN aria-label on banner button, got: ${enAriaLabel}`);
+
+  // Switch back to Polish
+  await iPage.evaluate(() => changeLanguage('pl'));
+  await iPage.waitForTimeout(150);
+  const plAriaLabel = await iPage.locator("#reopen-recovery-btn").getAttribute("aria-label");
+  assert(plAriaLabel === "Otwórz opcje odzyskiwania danych", `Expected PL aria-label on banner button, got: ${plAriaLabel}`);
+
+  await iContext.close();
+
   console.log("✓ Test 7 passed.");
 
   // -------------------------------------------------------------------------

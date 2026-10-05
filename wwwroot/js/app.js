@@ -404,20 +404,27 @@ async function resetCorruptedCacheToDefault() {
     }
     const defaultAttrs = await res.json();
     const sanitized = sanitizeProjectData({ attributes: defaultAttrs, products: [] });
+
+    // IC05-1: Durable commit - must succeed before clearing recovery state or in-memory project!
+    persistProject(sanitized.attributes, [], { force: true });
+
+    // Commit application state only after durable storage success
     appState.attributes = sanitized.attributes;
     appState.products = [];
     appState.nextProductId = 1;
     appState.corruptedCache = null;
     hideRecoveryBanner();
-    saveAttributesToLocalStorage(true);
-    saveProductsToLocalStorage(true);
     renderUI();
     closeCacheRecoveryModal();
     showToast(getTranslation('toast_defaults_restored') || 'Zresetowano dane do domyślnego szablonu.', 'info');
   } catch (err) {
     console.error('Failed to reset default template:', err);
-    // IC04-1: Preserve corruptedCache and do NOT dismiss recovery modal as if it succeeded!
-    showToast(getTranslation('toast_reset_failed') || 'Błąd pobierania szablonu domyślnego. Dane nie zostały zresetowane.', 'error');
+    // IC04-1 & IC05-1: Preserve corruptedCache and do NOT dismiss recovery modal if fetch or storage failed!
+    if (err && (err.name === 'QuotaExceededError' || err.code === 22)) {
+      handleStorageError(err);
+    } else {
+      showToast(getTranslation('toast_reset_failed') || 'Błąd pobierania szablonu domyślnego. Dane nie zostały zresetowane.', 'error');
+    }
   }
 }
 
@@ -521,33 +528,65 @@ async function loadLocalData() {
 }
 
 function handleStorageError(err) {
-  console.error('LocalStorage save error:', err);
+  console.error('Storage error:', err);
   if (err && (err.name === 'QuotaExceededError' || err.code === 22)) {
     showToast(getTranslation('toast_storage_full'), 'error');
   } else {
-    showToast(`Storage error: ${err.message || 'Błąd zapisu'}`, 'error');
+    showToast(`${getTranslation('toast_storage_error') || 'Błąd zapisu'}: ${err?.message || ''}`, 'error');
+  }
+}
+
+function persistProject(attributes, products, { force = false } = {}) {
+  if (appState.corruptedCache && !force) {
+    // IC04-1: Centralized recovery guard - do NOT overwrite preserved raw cache during temporary session!
+    return false;
+  }
+
+  const prevAttributes = localStorage.getItem('inventory_attributes');
+  const prevProducts = localStorage.getItem('inventory_products');
+
+  const serializedAttributes = JSON.stringify(attributes);
+  const serializedProducts = JSON.stringify(products);
+
+  let attributesWritten = false;
+  try {
+    localStorage.setItem('inventory_attributes', serializedAttributes);
+    attributesWritten = true;
+    localStorage.setItem('inventory_products', serializedProducts);
+    return true;
+  } catch (err) {
+    // IC05-1: Durable rollback - ensure storage is never left partially written!
+    try {
+      if (attributesWritten) {
+        if (prevAttributes !== null) {
+          localStorage.setItem('inventory_attributes', prevAttributes);
+        } else {
+          localStorage.removeItem('inventory_attributes');
+        }
+      }
+      if (prevProducts !== null) {
+        localStorage.setItem('inventory_products', prevProducts);
+      } else {
+        localStorage.removeItem('inventory_products');
+      }
+    } catch (rollbackErr) {
+      console.error('Storage rollback failed:', rollbackErr);
+    }
+    throw err;
   }
 }
 
 function saveAttributesToLocalStorage(force = false) {
-  if (appState.corruptedCache && !force) {
-    // IC04-1: Centralized recovery guard - do NOT overwrite preserved raw cache during temporary session!
-    return;
-  }
   try {
-    localStorage.setItem('inventory_attributes', JSON.stringify(appState.attributes));
+    persistProject(appState.attributes, appState.products, { force });
   } catch (err) {
     handleStorageError(err);
   }
 }
 
 function saveProductsToLocalStorage(force = false) {
-  if (appState.corruptedCache && !force) {
-    // IC04-1: Centralized recovery guard - do NOT overwrite preserved raw cache during temporary session!
-    return;
-  }
   try {
-    localStorage.setItem('inventory_products', JSON.stringify(appState.products));
+    persistProject(appState.attributes, appState.products, { force });
   } catch (err) {
     handleStorageError(err);
   }
@@ -599,9 +638,19 @@ function translatePage() {
     if (translation) {
       if (el.tagName === 'INPUT' && el.type === 'text') {
         el.placeholder = translation;
+      } else if (el.hasAttribute('data-i18n-html')) {
+        el.innerHTML = translation;
       } else {
         el.innerText = translation;
       }
+    }
+  });
+
+  document.querySelectorAll('[data-i18n-aria]').forEach(el => {
+    const key = el.getAttribute('data-i18n-aria');
+    const translation = appState.translations[key];
+    if (translation) {
+      el.setAttribute('aria-label', translation);
     }
   });
 
@@ -1639,6 +1688,10 @@ function importProjectFromJson(e) {
       const rawData = JSON.parse(event.target.result);
       const sanitized = sanitizeProjectData(rawData);
 
+      // IC05-1: Durable commit - must succeed before clearing recovery state or modifying memory project!
+      persistProject(sanitized.attributes, sanitized.products, { force: true });
+
+      // Commit application state only after durable storage success
       appState.attributes = sanitized.attributes;
       appState.products = sanitized.products;
       if (appState.products.length > 0) {
@@ -1653,16 +1706,18 @@ function importProjectFromJson(e) {
       hideRecoveryBanner();
       closeCacheRecoveryModal();
 
-      saveAttributesToLocalStorage(true);
-      saveProductsToLocalStorage(true);
       markAsEdited();
-      
       exitEditMode();
       renderUI();
       showToast(getTranslation('toast_import_success'), 'success');
     } catch (err) {
-      showToast(`${getTranslation('toast_import_error')} (${err.message})`, 'error');
-      console.error(err);
+      console.error('Failed to import project:', err);
+      // IC05-1: Preserve corruptedCache, modal, and banner if import or storage write failed!
+      if (err && (err.name === 'QuotaExceededError' || err.code === 22)) {
+        handleStorageError(err);
+      } else {
+        showToast(`${getTranslation('toast_import_error')} (${err.message})`, 'error');
+      }
     } finally {
       elements.importJsonFile.value = '';
     }
