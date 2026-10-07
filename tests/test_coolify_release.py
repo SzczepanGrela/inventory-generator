@@ -4,11 +4,14 @@ import argparse
 import io
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+import yaml
 
 from infra import coolify_release as release
 from infra import smokecheck
@@ -581,45 +584,117 @@ class TestCoolifyReleaseEdgeCases(unittest.TestCase):
 
 
 class TestOperatorProceduresAndDeployWorkflow(unittest.TestCase):
-    def _run_freshness_gate(self, event_name: str, expected_revision: str, main_revision: str) -> bool:
-        script = """
-        deploy=true
-        if [[ "$EVENT_NAME" != "workflow_dispatch" && -n "$EXPECTED_REVISION" ]]; then
-          if [[ "$MAIN_REVISION" != "$EXPECTED_REVISION" ]]; then
-            echo "Skipping stale deployment for $EXPECTED_REVISION; main is $MAIN_REVISION."
-            deploy=false
-          fi
-        fi
-        echo "$deploy"
-        """
-        res = subprocess.run(
-            ["bash", "-c", script],
-            env={
-                "EVENT_NAME": event_name,
-                "EXPECTED_REVISION": expected_revision,
-                "MAIN_REVISION": main_revision,
-            },
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return res.stdout.strip() == "true"
+    @classmethod
+    def setUpClass(cls):
+        deploy_yml_path = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "deploy.yml"
+        runbook_path = Path(__file__).resolve().parent.parent / "docs" / "operator-procedures.md"
 
-    def _run_preflight_check(self, expected_revision: str, image_revision: str) -> bool:
-        script = """
-        if [[ -n "$EXPECTED_REVISION" && "$revision" != "$EXPECTED_REVISION" ]]; then
-          echo "Image revision does not match the caller commit." >&2
-          exit 1
-        fi
-        exit 0
-        """
-        res = subprocess.run(
-            ["bash", "-c", script],
-            env={"EXPECTED_REVISION": expected_revision, "revision": image_revision},
-            capture_output=True,
-            text=True,
+        # Extract actual workflow step scripts from .github/workflows/deploy.yml
+        deploy_data = yaml.safe_load(deploy_yml_path.read_text(encoding="utf-8"))
+        preflight_steps = deploy_data["jobs"]["preflight"]["steps"]
+        step_scripts = {s.get("id"): s.get("run") for s in preflight_steps if "id" in s}
+
+        cls.freshness_script = step_scripts["freshness"]
+        cls.image_script = step_scripts["image"]
+
+        # Extract actual container selector script from docs/operator-procedures.md
+        runbook_text = runbook_path.read_text(encoding="utf-8")
+        match = re.search(
+            r"(CONTAINER_COUNT=\$\(echo \$CONTAINERS \| wc -w\).*?\nfi)",
+            runbook_text,
+            re.DOTALL,
         )
-        return res.returncode == 0
+        if not match:
+            raise RuntimeError("Could not find container selector snippet in docs/operator-procedures.md")
+        cls.selector_script = match.group(1)
+
+    def _run_freshness_gate(
+        self, event_name: str, expected_revision: str, main_revision: str
+    ) -> bool:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gh_bin = Path(tmpdir) / "gh"
+            gh_bin.write_text(f"#!/bin/sh\necho {main_revision}\n", encoding="utf-8")
+            gh_bin.chmod(0o755)
+            out_file = Path(tmpdir) / "output"
+            out_file.touch()
+            env = dict(os.environ)
+            old_path = env.get("PATH", "")
+            env["PATH"] = f"{tmpdir}:{old_path}"
+            env["EVENT_NAME"] = event_name
+            env["EXPECTED_REVISION"] = expected_revision
+            env["GITHUB_REPOSITORY"] = "SzczepanGrela/inventory-generator"
+            env["GITHUB_OUTPUT"] = str(out_file)
+            res = subprocess.run(
+                ["bash", "-c", self.freshness_script],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return "deploy=true" in out_file.read_text(encoding="utf-8")
+
+    def _run_image_revision_check(
+        self, expected_revision: str, image_label: str
+    ) -> bool:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            docker_bin = Path(tmpdir) / "docker"
+            docker_bin.write_text(
+                f"""#!/bin/sh
+if [ "$1" = "pull" ]; then exit 0; fi
+if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
+    echo "{image_label}"
+    exit 0
+fi
+exit 0
+""",
+                encoding="utf-8",
+            )
+            docker_bin.chmod(0o755)
+            out_file = Path(tmpdir) / "output"
+            out_file.touch()
+            env = dict(os.environ)
+            old_path = env.get("PATH", "")
+            env["PATH"] = f"{tmpdir}:{old_path}"
+            env["IMAGE_NAME"] = "ghcr.io/szczepangrela/inventory-generator"
+            env["DIGEST"] = "sha256:" + "0" * 64
+            env["EXPECTED_REVISION"] = expected_revision
+            env["GITHUB_OUTPUT"] = str(out_file)
+            res = subprocess.run(
+                ["bash", "-c", self.image_script],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            return res.returncode == 0
+
+    def _run_container_selector(self, containers: str):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            docker_bin = Path(tmpdir) / "docker"
+            arg_file = Path(tmpdir) / "args.json"
+            docker_bin.write_text(
+                f"""#!/bin/sh
+python3 -c 'import sys, json; json.dump(sys.argv[1:], open("{arg_file}", "w"))' "$@"
+exit 0
+""",
+                encoding="utf-8",
+            )
+            docker_bin.chmod(0o755)
+            env = dict(os.environ)
+            old_path = env.get("PATH", "")
+            env["PATH"] = f"{tmpdir}:{old_path}"
+            env["CONTAINERS"] = containers
+            res = subprocess.run(
+                ["bash", "-c", self.selector_script],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            docker_args = (
+                json.loads(arg_file.read_text(encoding="utf-8"))
+                if arg_file.exists()
+                else None
+            )
+            return res.returncode, res.stdout, res.stderr, docker_args
 
     def test_workflow_dispatch_old_manual_target_reaches_promotion(self):
         # IC05-2: Deliberate manual rollback with old commit should NOT be skipped as stale
@@ -631,7 +706,7 @@ class TestOperatorProceduresAndDeployWorkflow(unittest.TestCase):
         self.assertTrue(deploy, "Manual rollback must reach promotion even if expected_revision differs from main")
 
     def test_workflow_dispatch_empty_expected_revision_reaches_promotion(self):
-        # IC05-2: Manual dispatch with empty expected_revision (falling back to image label) reaches promotion
+        # IC05-2: Manual dispatch with empty expected_revision reaches promotion
         deploy = self._run_freshness_gate(
             event_name="workflow_dispatch",
             expected_revision="",
@@ -639,8 +714,26 @@ class TestOperatorProceduresAndDeployWorkflow(unittest.TestCase):
         )
         self.assertTrue(deploy)
 
+    def test_push_stale_automatic_target_is_rejected(self):
+        # IC05F-2: Automatic push event with old revision MUST be skipped (deploy=false)
+        deploy = self._run_freshness_gate(
+            event_name="push",
+            expected_revision="9a2dee631f4aff76dc2024d3036287ad93216452",
+            main_revision="16ed383d2affb96a7a538ec935a7b3b7dd337257",
+        )
+        self.assertFalse(deploy, "Stale automatic push deployment must be skipped (deploy=false)")
+
+    def test_push_fresh_automatic_target_proceeds(self):
+        # IC05F-2: Automatic push matching main revision proceeds (deploy=true)
+        deploy = self._run_freshness_gate(
+            event_name="push",
+            expected_revision="16ed383d2affb96a7a538ec935a7b3b7dd337257",
+            main_revision="16ed383d2affb96a7a538ec935a7b3b7dd337257",
+        )
+        self.assertTrue(deploy)
+
     def test_workflow_call_stale_automatic_target_is_rejected(self):
-        # IC05-2: Automatic deployment whose expected revision differs from main MUST be skipped
+        # IC05-2 / IC05F-2: Automatic deployment whose expected revision differs from main MUST be skipped
         deploy = self._run_freshness_gate(
             event_name="workflow_call",
             expected_revision="9a2dee631f4aff76dc2024d3036287ad93216452",
@@ -657,18 +750,35 @@ class TestOperatorProceduresAndDeployWorkflow(unittest.TestCase):
         )
         self.assertTrue(deploy)
 
-    def test_preflight_mismatched_image_revision_is_rejected(self):
-        # IC05-2: Preflight rejects mismatch between expected_revision and image revision label
-        passed = self._run_preflight_check(
+    def test_preflight_image_revision_label_verification_matches(self):
+        # IC05F-2: Image revision label matching expected_revision passes verification
+        passed = self._run_image_revision_check(
             expected_revision="9a2dee631f4aff76dc2024d3036287ad93216452",
-            image_revision="16ed383d2affb96a7a538ec935a7b3b7dd337257",
+            image_label="9a2dee631f4aff76dc2024d3036287ad93216452",
         )
-        self.assertFalse(passed, "Preflight must reject mismatched image revision")
+        self.assertTrue(passed)
 
-    def test_preflight_matching_image_revision_passes(self):
-        passed = self._run_preflight_check(
+    def test_preflight_image_revision_label_verification_rejects_mismatch(self):
+        # IC05F-2: Image revision label mismatch against expected_revision is rejected
+        passed = self._run_image_revision_check(
             expected_revision="9a2dee631f4aff76dc2024d3036287ad93216452",
-            image_revision="9a2dee631f4aff76dc2024d3036287ad93216452",
+            image_label="16ed383d2affb96a7a538ec935a7b3b7dd337257",
+        )
+        self.assertFalse(passed, "Preflight must reject mismatched image revision label")
+
+    def test_preflight_image_revision_label_verification_rejects_invalid_label(self):
+        # IC05F-2: Image revision label that is not a valid 40-hex SHA is rejected
+        passed = self._run_image_revision_check(
+            expected_revision="9a2dee631f4aff76dc2024d3036287ad93216452",
+            image_label="invalid_non_hex_revision",
+        )
+        self.assertFalse(passed, "Preflight must reject invalid revision format")
+
+    def test_preflight_image_revision_label_verification_empty_expected_proceeds(self):
+        # IC05F-2: When expected_revision is empty, preflight proceeds if label is valid 40-hex
+        passed = self._run_image_revision_check(
+            expected_revision="",
+            image_label="9a2dee631f4aff76dc2024d3036287ad93216452",
         )
         self.assertTrue(passed)
 
@@ -687,42 +797,27 @@ class TestOperatorProceduresAndDeployWorkflow(unittest.TestCase):
         self.assertEqual(dispatch_correct(release.UncertainDeployment("uncertain state")), "uncertain_handled")
         self.assertEqual(dispatch_correct(release.ReleaseError("regular error")), "release_error_handled")
 
-    def test_runbook_container_filters_array(self):
-        # IC05-4: Multi-container filter must produce separate array items (--filter id=a --filter id=b), not one combined string
-        script = """
-        CONTAINER_COUNT=$(echo $CONTAINERS | wc -w)
-        if [ "$CONTAINER_COUNT" -eq 1 ]; then
-          CONTAINER_ID="$CONTAINERS"
-          echo "SINGLE:$CONTAINER_ID"
-        elif [ "$CONTAINER_COUNT" -gt 1 ]; then
-          FILTER_ARGS=()
-          for cid in $CONTAINERS; do
-            FILTER_ARGS+=(--filter "id=$cid")
-          done
-          python3 -c "import sys, json; json.dump(sys.argv[1:], sys.stdout)" "${FILTER_ARGS[@]}"
-        else
-          echo "EMPTY" >&2
-          exit 1
-        fi
-        """
+    def test_runbook_container_selector_zero_containers_fails(self):
+        # IC05F-2: Zero containers output error and exit code 1
+        rc, out, err, args = self._run_container_selector("")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("BŁĄD: Brak uruchomionych kontenerów", err)
 
-        # Case 0: Empty containers -> exit code 1
-        res0 = subprocess.run(["bash", "-c", script], env={"CONTAINERS": ""}, capture_output=True, text=True)
-        self.assertNotEqual(res0.returncode, 0)
-        self.assertIn("EMPTY", res0.stderr)
+    def test_runbook_container_selector_single_container_succeeds(self):
+        # IC05F-2: Single container selects ID and exits 0
+        rc, out, err, args = self._run_container_selector("single_cid_123")
+        self.assertEqual(rc, 0)
+        self.assertIn("Aktywny pojedynczy kontener produkcyjny: single_cid_123", out)
 
-        # Case 1: Exactly 1 container
-        res1 = subprocess.run(["bash", "-c", script], env={"CONTAINERS": "single_cid_123"}, capture_output=True, text=True)
-        self.assertEqual(res1.returncode, 0)
-        self.assertEqual(res1.stdout.strip(), "SINGLE:single_cid_123")
-
-        # Case 2: 2 containers -> array of arguments (test both space and newline delimited)
+    def test_runbook_container_selector_two_containers_separate_flags(self):
+        # IC05-4 / IC05F-2: Multi-container produces separate flags (--filter id=a --filter id=b), not one combined string
         for sep in [" ", "\n"]:
             containers = f"cid_aaa{sep}cid_bbb"
-            res2 = subprocess.run(["bash", "-c", script], env={"CONTAINERS": containers}, capture_output=True, text=True)
-            self.assertEqual(res2.returncode, 0)
-            args = json.loads(res2.stdout)
-            self.assertEqual(args, ["--filter", "id=cid_aaa", "--filter", "id=cid_bbb"])
+            rc, out, err, args = self._run_container_selector(containers)
+            self.assertEqual(rc, 1)
+            self.assertIn("Wykryto 2 aktywnych kontenerów", err)
+            self.assertEqual(args[:4], ["ps", "--filter", "id=cid_aaa", "--filter"])
+            self.assertEqual(args[4], "id=cid_bbb")
             for arg in args:
                 self.assertNotIn(" --filter ", arg)
 

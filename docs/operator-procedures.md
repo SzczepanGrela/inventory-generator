@@ -44,12 +44,12 @@ W przypadku wykrycia niezgodności operator odrzuca wdrożenie w GitHub Actions 
 
 Mechanizm wycofania (*rollback*) zapewnia przywrócenie poprzedniej znanej, stabilnej wersji w przypadku niepowodzenia wdrożenia. Należy ściśle odróżnić **standardową promocję wydania** (`deploy_release`) od **awaryjnego wycofania** (`rollback`):
 - **Standardowa promocja (`deploy_release`)**: obejmuje weryfikację kontraktu, odpytywanie wdrożenia Coolify (budżet `--deployment-timeout`, domyślnie 600s), ustabilizowanie nowej rewizji (do 45 prób co 2s na 5 kolejnych zgodnych odczytów), sprawdzenie stanu `running:healthy`, pełne testy dymne (`infra.smokecheck.check_release`) oraz minimum 30-sekundowe okno obserwacyjne (*soak period*: 15 sprawdzeń co 2s przez `soak_release`).
-- **Awaryjny rollback (`rollback`)**: nie jest procesem natychmiastowym, lecz celowo pomija fazę `soak_release`, aby zminimalizować czas przywrócenia stabilnej usługi. Składa się z odrębnych faz o zdefiniowanych limitach czasowych:
+- **Awaryjny rollback (`rollback`)**: nie jest procesem natychmiastowym, lecz celowo pomija fazę `soak_release`, aby zminimalizować czas przywrócenia stabilnej usługi. Składa się z odrębnych faz o zdefiniowanych parametrach i limitach prób:
   1. Sprawdzenie braku aktywnych i niepewnych wdrożeń (`verify_no_running_deployment`).
   2. Przywrócenie poprzedniego tagu obrazu w Coolify (`client.update_tag`) i weryfikacja kontraktu.
   3. Kolejkowanie wdrożenia i odpytywanie jego statusu (budżet `--deployment-timeout`, domyślnie 300s/600s, z równoległą sondą publiczną i natychmiastowym anulowaniem do 60s przy 3 kolejnych błędach).
-  4. Oczekiwanie na ustabilizowanie się poprzedniej rewizji publicznej: do 30 prób co 2s na 3 kolejne zgodne odczyty przez `wait_for_revision` (rzeczywisty budżet fazy: od min. 60s do maks. ok. 360s z uwzględnieniem 10s timeoutu żądań sieciowych w `read_public_revision`).
-  5. Oczekiwanie na stan zdrowia kontenera w Coolify: do 30 prób co 2s przez `wait_for_healthy_application` (rzeczywisty budżet fazy: od min. 60s do maks. ok. 360s z uwzględnieniem 10s timeoutu zapytań do Coolify API).
+  4. Oczekiwanie na ustabilizowanie się poprzedniej rewizji publicznej: do 30 prób co 2s na 3 kolejne zgodne odczyty przez `wait_for_revision` (pojedyncze żądanie sieciowe z 10s timeoutem w `read_public_revision`; przy szybkiej stabilizacji zwraca natychmiast po 3 zgodnych odczytach).
+  5. Oczekiwanie na stan zdrowia kontenera w Coolify: do 30 prób co 2s przez `wait_for_healthy_application`. Klient `CoolifyClient` domyślnie stosuje 15-sekundowy timeout pojedynczego wywołania oraz do 3 prób GET z przerwami backoff (1s, 2s) przy błędach sieciowych lub HTTP >= 500; przy poprawnym statusie kontenera (`running:healthy`) funkcja powraca natychmiast bez oczekiwania na wyczerpanie prób.
   6. Weryfikacja bazowego endpointu zdrowia (`check_public_baseline`).
 
 ### 2.1. Automatyczny Rollback w `coolify_release.py`

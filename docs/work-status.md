@@ -6,24 +6,24 @@ Dla zachowania pełnej przejrzystości operacyjnej wprowadza się ścisłe rozr�
 
 - **Zaimplementowane w kodzie źródłowym**:
   - Rewizja bazowa `main`: `16ed383d2affb96a7a538ec935a7b3b7dd337257` (scalone PR #23, #24, #25).
-  - PR #26: `fix/preserve-cache-throughout-recovery` (head: `bed0918`) – trwała persystencja transakcyjna (`persistProject`), atomowy rollback w `localStorage` przy błędach zapisu quota/storage, brak fałszywych toastów sukcesu, zachowanie stanu awaryjnego i pełnego oryginału 5001 wierszy po przeładowaniu, dwujęzyczny modal i etykiety accessibility (PL/EN).
-  - PR #27: `fix/operator-runbook-selectors-and-rollback` – wspierana ścieżka manualnego rollbacku w GitHub Actions (rozróżnienie intencjonalnego `workflow_dispatch` od automatycznej bramki świeżości `workflow_call`), zamrożenie promocyjne (*promotional freeze*) zamiast nieuzasadnionego powoływania się na lock ze snapshotu API, poprawna kolejność obsługi wyjątku `UncertainDeployment` przed `ReleaseError`, tablica selektorów kontenerów w bashu (`--filter id=...`), realistyczne budżety czasowe (60s–210s dla pętli monitorowania), 28 testów offline Pythona.
+  - PR #26: `fix/preserve-cache-throughout-recovery` (head: `b3d6fb3`) – pojedynczy autorytatywny zapis projektu (`inventory_project`, wersjonowana koperta `{ version: 1, attributes, products }`) jako wyłączny punkt zatwierdzenia z bezpieczną migracją kluczy legacy, brak usuwania ani nadpisywania trwałego oryginału przed zatwierdzeniem nowego projektu, brak fałszywych toastów sukcesu, zachowanie stanu awaryjnego i pełnego oryginału (zarówno atrybutów, jak i 5001 wierszy) w kopii recovery po przeładowaniu, dwujęzyczny modal i etykiety accessibility (PL/EN).
+  - PR #27: `fix/operator-runbook-selectors-and-rollback` – wspierana ścieżka manualnego rollbacku w GitHub Actions (rozróżnienie intencjonalnego `workflow_dispatch` od automatycznej bramki świeżości `workflow_call` i `push`), zamrożenie promocyjne (*promotional freeze*) zamiast nieuzasadnionego powoływania się na lock ze snapshotu API, poprawna kolejność obsługi wyjątku `UncertainDeployment` przed `ReleaseError`, tablica selektorów kontenerów w bashu (`--filter id=...`), realistyczne budżety czasowe (CoolifyClient: 15s timeout, do 3 prób GET z backoffem 1s i 2s; 60s–210s dla pętli monitorowania), 34 testy offline Pythona powiązane bezpośrednio z rzeczywistymi blokami źródłowymi.
   - **Ważne**: Obie gałęzie bazują niezależnie na `main` (`16ed383d`); **PR #27 nie zawiera zmian z PR #26**. Testy i CI obu PR-ów są rozłączne; połączony kandydat będzie wymagał wspólnego zielonego CI po standardowej integracji w `main`.
 - **Przetestowane w CI**:
-  - Dla PR #26: 84 testy .NET Core, 17 testów Pythona, 12 zestawów testów E2E Playwright (w tym subtesty 7F-7I weryfikujące błędy zapisu i dwujęzyczność).
-  - Dla PR #27: 84 testy .NET Core, 28 testów Pythona (w tym testy offline kontraktu, odporności na niepewne wdrożenia, bramki świeżości workflow deploy, kolejności wyjątków i selektorów kontenerów) oraz testy przeglądarkowe w zakresie gałęzi bazowej.
+  - Dla PR #26: 84 testy .NET Core, 17 testów Pythona, 12 zestawów testów E2E Playwright (w tym subtesty 7F-7I weryfikujące błędy zapisu, trwałość oryginału po przeładowaniu i dwujęzyczność).
+  - Dla PR #27: 84 testy .NET Core, 34 testy Pythona (w tym testy offline kontraktu, odporności na niepewne wdrożenia, bramki świeżości workflow deploy powiązane z rzeczywistym `deploy.yml`, weryfikacji etykiet rewizji obrazu, kolejności wyjątków i selektorów kontenerów powiązanych z `operator-procedures.md`) oraz testy przeglądarkowe w zakresie gałęzi bazowej.
 - **Wdrożone na produkcję (Live VPS)**:
   - Commit SHA: `9a2dee631f4aff76dc2024d3036287ad93216452` (PR #18, .NET 10 LTS).
   - Publiczny punkt kontrolny: `https://inventory-generator.grela.dev` (odczyt publiczny potwierdza wersję `9a2dee6...`).
   - **Żadne późniejsze zmiany z gałęzi `main` (w tym PR #23, #24, #25, #26, #27) nie zostały wdrożone na serwer produkcyjny VPS**. Wdrożenie produkcyjne pozostaje celowo niewykonane i niezatwierdzone w GitHub Actions do czasu ukończenia procedury odbioru.
-- **Formalny status odbioru koordynatora (Audyt 2026-10-05 / IC05)**:
-  - Zadanie **D02.3a** (bezpieczeństwo eksportu i nagłówki CSP/nosniff/HSTS) pozostaje **otwarte / niezamknięte** (*unchecked*).
-  - Zadanie **D02.3d** rejestruje implementację dostawy (*delivery implementation*) i dowody normalnego wydania w Coolify, a nie bezwarunkową formalną akceptację pełnej izolacji wykonawczej (*runtime isolation*).
+- **Formalny status odbioru koordynatora (Audyt 2026-10-05 / IC05 / IC05F, PR #53 w grela-dev-infrastructure)**:
+  - Zadanie **D02.3a** (zakres źródeł/metadanych, spójność SDK/.NET runtime/Actions/obrazu bazowego oraz powiązane PR-y zależności; definicja kanoniczna w [roadmapie grela-dev-roadmap](https://github.com/SzczepanGrela/grela-dev-roadmap/pull/13)) pozostaje **otwarte / niezamknięte** (*unchecked*).
+  - Zadanie **D02.3d** rejestruje zakres implementacji dostawy (*delivery implementation*) i dowody normalnego wydania w Coolify, a nie pełną izolację wykonawczą (*runtime isolation*).
   - Zadania **D02.3b, D02.3c, D02.3e, D02.3f** pozostają **otwarte / w toku**:
     - D02.3c & D02.3f: Zaadresowane w otwartych do review PR #26 i PR #27.
     - D02.3b: Wymaga kwalifikacji obciążenia DOCX/CSV/HTML pod limitami 1 CPU / 512 MiB w skoordynowanym oknie (3 sloty no-wait nie stanowią bezwarunkowego dowodu wyeliminowania OOM).
     - D02.3e: Testy awaryjne/rollbacku na żywym VPS wymagają odrębnego okna operacyjnego z progami zatrzymania.
-  - Oficjalny status śledzony jest bezpośrednio w dokumentacji koordynatora: audyt `audits/2026-10-05-inventory-pr26-pr27-review.md` (w `grela-dev-infrastructure` PR #53) oraz roadmapa (w `grela-dev-roadmap` PR #13, 84%). Zielone CI samo w sobie nie zamyka D02.3.
+  - Oficjalny status śledzony jest bezpośrednio w dokumentacji koordynatora: audyty `audits/2026-10-05-inventory-pr26-pr27-review.md` i `audits/2026-10-05-inventory-pr26-pr27-followup.md` (w `grela-dev-infrastructure` PR #53) oraz roadmapa (w `grela-dev-roadmap` PR #13, 84%). Zielone CI samo w sobie nie zamyka D02.3.
 
 ---
 
@@ -39,24 +39,24 @@ Dla zachowania pełnej przejrzystości operacyjnej wprowadza się ścisłe rozr�
   - Pomiar Working Set oznaczony jako `ProcessWorkingSetAfterCompletion` (wskazuje stan po zakończeniu, nie szczytowy profiler ciągły).
   - Trzy zróżnicowane syntetyczne kształty tabel (szeroka 50x1k, długa 10x5k, gęsta 25x1k).
 
-### Obszar B: Integralność danych i bezpieczne logowanie (IC03-1, IC03-3, IC04-1, IC05-1) - [Scalono w PR #24, poprawki w PR #26]
+### Obszar B: Integralność danych i bezpieczne logowanie (IC03-1, IC03-3, IC04-1, IC05-1, IC05F-1) - [Scalono w PR #24, poprawki w PR #26]
 - **Trwała ochrona lokalnego projektu**:
-  - `persistProject` z atomowym wycofaniem zmian w `localStorage` zapobiega niespójnemu stanowi przy częściowym błędzie zapisu (np. `QuotaExceededError`).
-  - `resetCorruptedCacheToDefault` oraz `importProjectFromJson` czyszczą stan recovery i wyświetlają toast sukcesu dopiero po trwałym zapisie w magazynie przeglądarki.
-  - Zachowanie stanu recovery i pełnego oryginału (5001 wierszy) w magazynie i po przeładowaniu strony.
+  - Pojedynczy autorytatywny zapis projektu (`persistProject` zapisujący wersjonowaną kopertę `inventory_project`), eliminujący zawodne próby kompensacji dwufazowej; w razie niepowodzenia zapisu magazyn `localStorage` pozostaje nienaruszony (dane legacy zachowane).
+  - `resetCorruptedCacheToDefault` oraz `importProjectFromJson` czyszczą stan recovery i wyświetlają toast sukcesu dopiero po trwałym zatwierdzeniu projektu w magazynie przeglądarki.
+  - Zachowanie stanu recovery i pełnego oryginału (zarówno atrybutów, jak i 5001 wierszy) w magazynie i po przeładowaniu strony.
   - Pełna dwujęzyczność okna recovery i etykiet ARIA (PL/EN).
 - **Logi serwerowe bez danych użytkownika (`Program.cs`, `PayloadValidator.cs`)**:
   - Ustrukturyzowane kody błędów (`ValidationOutcome`) – logowane wyłącznie metadane (`ClientIp`, `Format`, `ErrorCode`, `ColumnsCount`, `RowsCount`). Żadna nazwa kolumny użytkownika ani klucz atrybutu nie trafia do logów.
 
-### Obszar C: Procedury operatorskie i testy integracyjne (IC03-4, IC03-5, IC04-2, IC05-2..4) - [Scalono w PR #25, poprawki w PR #27]
+### Obszar C: Procedury operatorskie i testy integracyjne (IC03-4, IC03-5, IC04-2, IC05-2..4, IC05F-2) - [Scalono w PR #25, poprawki w PR #27]
 - **Wykonywalny runbook operatorski (`docs/operator-procedures.md`)**:
   - Selektor kontenera: numeryczny database ID (`APP_NUMERIC_ID`) z Coolify API lub unikalny prefiks nazwy kontenera dla danego UUID; dla wielu kontenerów tablica argumentów `FILTER_ARGS+=(--filter "id=$cid")`.
   - Manualny rollback w GitHub Actions: wspierana ścieżka `workflow_dispatch` z weryfikacją etykiety obrazu i ochroną przed pominięciem przez bramkę świeżości.
   - Awaryjny rollback w Coolify: wymóg skoordynowanego zamrożenia promocji (*promotional freeze*) na czas operacji; obsługa `UncertainDeployment` przed `ReleaseError`.
-  - Rzetelne budżety czasowe: faza stabilizacji rewizji i sprawdzania zdrowia Coolify (do ~360s z uwzględnieniem 10s timeoutów HTTP/API); pętla monitorowania sąsiada w runbooku (od min. 60s do maks. ~210s).
+  - Rzetelne budżety czasowe: `CoolifyClient` stosuje domyślnie 15-sekundowy timeout pojedynczego wywołania oraz do 3 prób GET (z retry backoff 1s, 2s; natychmiastowy powrót przy sukcesie); pętla monitorowania sąsiada w runbooku (od min. 60s do maks. ~210s).
 - **Rozszerzone testy offline**:
   - Regresja Kestrel chunked body HTTP 413 dla zapytań > 2 MiB.
-  - 28 testów Pythona (kontrakt, odrzucanie wdrożeń przy konfliktach, niepewne statusy, bramka deploy.yml, kolejność wyjątków, tablice selektorów).
+  - 34 testy Pythona powiązane bezpośrednio z rzeczywistym kodem źródłowym (ekstrakcja bloków shellowych z `.github/workflows/deploy.yml` dla bramki świeżości `push`/`workflow_call`/`workflow_dispatch` oraz weryfikacji etykiet obrazu; ekstrakcja selektora kontenerów z `docs/operator-procedures.md` dla 0/1/2 ID; kontrakt, odrzucanie wdrożeń przy konfliktach, niepewne statusy, kolejność wyjątków).
 
 ---
 
@@ -66,7 +66,7 @@ Zgodnie z wytycznymi koordynatora, oba PR-y pozostają otwarte do przeglądu i n
 
 1. **PR #26 (Ochrona Cache w Całym Cyklu Recovery)**:
    - Branch: `fix/preserve-cache-throughout-recovery`
-   - Head: `bed0918`
+   - Head: `b3d6fb3`
    - Status: Otwarty, zielone CI.
 2. **PR #27 (Wykonywalne Procedury Operatorskie i Bezpieczny Rollback)**:
    - Branch: `fix/operator-runbook-selectors-and-rollback`
