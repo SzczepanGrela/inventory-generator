@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
+import nodeAssert from "node:assert";
 
 const port = 5199;
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -50,6 +51,8 @@ const assert = (condition, message) => {
     throw new Error(`Assertion failed: ${message}`);
   }
 };
+assert.deepStrictEqual = nodeAssert.deepStrictEqual;
+assert.strictEqual = nodeAssert.strictEqual;
 
 let browser;
 let failed = false;
@@ -74,9 +77,10 @@ try {
   assert(emptyStateVisible, "Empty state should be displayed when product list is empty");
 
   // Verify attributes were loaded into memory / localStorage
-  const savedAttrs = await page.evaluate(() => localStorage.getItem("inventory_attributes"));
-  assert(savedAttrs !== null, "Default attributes must be stored in localStorage");
-  const parsedAttrs = JSON.parse(savedAttrs);
+  const savedProject = await page.evaluate(() => localStorage.getItem("inventory_project") || localStorage.getItem("inventory_attributes"));
+  assert(savedProject !== null, "Default attributes/project must be stored in localStorage");
+  const parsed = JSON.parse(savedProject);
+  const parsedAttrs = parsed.attributes || parsed;
   assert(parsedAttrs.length >= 5, `Expected at least 5 default attributes in localStorage, got ${parsedAttrs.length}`);
 
   // Open modal using #open-product-modal-btn
@@ -146,6 +150,7 @@ try {
   // -------------------------------------------------------------------------
   console.log("Running Test 3: Corrupted cache detection and safe recovery...");
   await page.evaluate(() => {
+    localStorage.removeItem("inventory_project");
     localStorage.setItem("inventory_attributes", JSON.stringify([null]));
     localStorage.setItem("inventory_products", "malformed-json-here{{");
   });
@@ -174,8 +179,11 @@ try {
   await page.click("#recovery-reset-btn");
   await page.waitForSelector("#recovery-modal", { state: "hidden" });
 
-  const recoveredAttrs = await page.evaluate(() => localStorage.getItem("inventory_attributes"));
-  assert(recoveredAttrs !== null && JSON.parse(recoveredAttrs).length >= 5, "Default attributes must be restored in localStorage after explicit reset");
+  const recoveredProject = await page.evaluate(() => localStorage.getItem("inventory_project") || localStorage.getItem("inventory_attributes"));
+  assert(recoveredProject !== null, "Default project must be restored in localStorage after explicit reset");
+  const parsedRec = JSON.parse(recoveredProject);
+  const recAttrs = parsedRec.attributes || parsedRec;
+  assert(recAttrs.length >= 5, "Default attributes must be restored in localStorage after explicit reset");
   console.log("✓ Test 3 passed.");
 
   // -------------------------------------------------------------------------
@@ -317,6 +325,7 @@ try {
   })));
 
   await page.evaluate((data) => {
+    localStorage.removeItem("inventory_project");
     localStorage.setItem("inventory_attributes", JSON.stringify([{ name: "Col1", type: "String" }]));
     localStorage.setItem("inventory_products", data);
   }, synthetic5001Data);
@@ -411,8 +420,10 @@ try {
   // Explicit user reset via button restores default template
   await page.click("#recovery-reset-btn");
   await page.waitForSelector("#recovery-modal", { state: "hidden" });
-  const rawAfterExplicitReset = await page.evaluate(() => localStorage.getItem("inventory_products"));
-  assert(JSON.parse(rawAfterExplicitReset).length === 0, "Explicit reset must deliberately replace storage with empty product list");
+  const rawAfterExplicitReset = await page.evaluate(() => localStorage.getItem("inventory_project") || localStorage.getItem("inventory_products"));
+  const parsedReset = JSON.parse(rawAfterExplicitReset);
+  const resetProds = parsedReset.products !== undefined ? parsedReset.products : parsedReset;
+  assert(resetProds.length === 0, "Explicit reset must deliberately replace storage with empty product list");
   const bannerHiddenAfterReset = await page.locator("#recovery-banner").isHidden();
   assert(bannerHiddenAfterReset, "Recovery banner must be hidden after explicit reset");
 
@@ -420,6 +431,7 @@ try {
   console.log("Subtest 7C: Import via file-input workflow rejects invalid schema and preserves storage...");
   // Set known valid state in localStorage first
   await page.evaluate(() => {
+    localStorage.removeItem("inventory_project");
     localStorage.setItem("inventory_attributes", JSON.stringify([{ name: "SavedCol", type: "String" }]));
     localStorage.setItem("inventory_products", JSON.stringify([{ id: 1, attributes: { SavedCol: "PreservedValue" } }]));
   });
@@ -443,7 +455,7 @@ try {
   assert(importToast.includes("Błąd") || importToast.includes("Error") || importToast.includes("nieprawidłowy"), `Expected error toast on invalid import, got: ${importToast}`);
 
   // Verify localStorage is still the preserved valid state
-  const preservedProds = await page.evaluate(() => localStorage.getItem("inventory_products"));
+  const preservedProds = await page.evaluate(() => localStorage.getItem("inventory_project") || localStorage.getItem("inventory_products"));
   assert(preservedProds.includes("PreservedValue"), "Failed file import must not overwrite or modify existing stored project");
 
   // Verify valid JSON file import updates storage and UI
@@ -459,7 +471,7 @@ try {
   });
 
   await page.waitForTimeout(300);
-  const validStored = await page.evaluate(() => localStorage.getItem("inventory_products"));
+  const validStored = await page.evaluate(() => localStorage.getItem("inventory_project") || localStorage.getItem("inventory_products"));
   assert(validStored.includes("ImportedItemValue"), "Valid JSON import must successfully update stored products");
   const tableWithImport = await page.textContent("#inventory-tbody");
   assert(tableWithImport.includes("ImportedItemValue"), "Valid JSON import must update table DOM");
@@ -470,6 +482,7 @@ try {
   const recPage = await recContext.newPage({ viewport: { width: 1280, height: 800 } });
   await recPage.goto(baseUrl, { waitUntil: "networkidle" });
   await recPage.evaluate(() => {
+    localStorage.removeItem("inventory_project");
     localStorage.setItem("inventory_attributes", "corrupted-json{{");
     localStorage.setItem("inventory_products", "[]");
   });
@@ -495,7 +508,7 @@ try {
   await recPage.unroute("**/api/attributes/default/**");
   await recPage.click("#recovery-reset-btn");
   await recPage.waitForSelector("#recovery-modal", { state: "hidden" });
-  const rawAfterSuccessReset = await recPage.evaluate(() => localStorage.getItem("inventory_attributes"));
+  const rawAfterSuccessReset = await recPage.evaluate(() => localStorage.getItem("inventory_project") || localStorage.getItem("inventory_attributes"));
   assert(rawAfterSuccessReset !== "corrupted-json{{", "Successful reset must update attributes in localStorage");
 
   await recContext.close();
@@ -509,6 +522,7 @@ try {
   // Ensure no cookies exist and seed malformed attributes
   await freshPage.evaluate(() => {
     document.cookie = "inventory_is_edited=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+    localStorage.removeItem("inventory_project");
     localStorage.setItem("inventory_attributes", "bad-json{{");
     localStorage.setItem("inventory_products", "[]");
   });
@@ -526,8 +540,8 @@ try {
 
   await freshContext.close();
 
-  // 7F: IC05-1 Failed 2nd storage write during reset preserves complete original and rolls back
-  console.log("Subtest 7F: Failed 2nd write (inventory_products) during reset preserves complete original...");
+  // 7F: IC05F-1 Persistent write rejection during reset preserves complete original
+  console.log("Subtest 7F: Persistent write rejection during reset preserves complete original...");
   const fContext = await browser.newContext();
   const fPage = await fContext.newPage({ viewport: { width: 1280, height: 800 } });
   await fPage.goto(baseUrl, { waitUntil: "networkidle" });
@@ -539,6 +553,7 @@ try {
   const origAttrsF = JSON.stringify([{ name: "Col1", type: "String" }]);
 
   await fPage.evaluate(([attrs, prods]) => {
+    localStorage.removeItem("inventory_project");
     localStorage.setItem("inventory_attributes", attrs);
     localStorage.setItem("inventory_products", prods);
   }, [origAttrsF, synthetic5001F]);
@@ -546,18 +561,16 @@ try {
   await fPage.reload({ waitUntil: "networkidle" });
   await fPage.waitForSelector("#recovery-modal:not(.hide)");
 
-  // Inject failure on localStorage.setItem for 'inventory_products' (the 2nd write)
+  // Inject persistent failure on localStorage.setItem for project/products and all subsequent writes
   await fPage.evaluate(() => {
-    const originalSetItem = localStorage.setItem.bind(localStorage);
-    window.__setItemFailProducts = true;
-    localStorage.setItem = function(key, val) {
-      if (window.__setItemFailProducts && key === 'inventory_products') {
-        const err = new Error('Quota exceeded');
-        err.name = 'QuotaExceededError';
-        err.code = 22;
-        throw err;
+    const realSetItem = Storage.prototype.setItem;
+    let failed = false;
+    Storage.prototype.setItem = function (key, value) {
+      if (this === localStorage && (failed || key === 'inventory_products' || key === 'inventory_project')) {
+        failed = true;
+        throw new DOMException('Injected persistent write failure', 'QuotaExceededError');
       }
-      return originalSetItem(key, val);
+      return realSetItem.call(this, key, value);
     };
   });
 
@@ -578,11 +591,13 @@ try {
   const fModalVisible = await fPage.locator("#recovery-modal").isVisible();
   assert(fModalVisible, "Recovery modal must remain visible after failed reset");
 
-  // Crucial: Storage must be completely rolled back (both attributes and products intact!)
+  // Crucial: Storage must be completely untouched (both attributes and products intact!)
   const fAttrsAfterFail = await fPage.evaluate(() => localStorage.getItem("inventory_attributes"));
   const fProdsAfterFail = await fPage.evaluate(() => localStorage.getItem("inventory_products"));
-  assert(fAttrsAfterFail === origAttrsF, "Attributes must be rolled back to original on partial write failure");
+  const fProjAfterFail = await fPage.evaluate(() => localStorage.getItem("inventory_project"));
+  assert(fAttrsAfterFail === origAttrsF, "Attributes must remain intact on write failure");
   assert(fProdsAfterFail === synthetic5001F, "Products must remain original 5001 rows on write failure");
+  assert(fProjAfterFail === null, "No project key should be created on write failure");
 
   // Reload the page: recovery state must survive reload!
   await fPage.reload({ waitUntil: "networkidle" });
@@ -590,7 +605,7 @@ try {
   const fModalAfterReload = await fPage.locator("#recovery-modal").isVisible();
   assert(fModalAfterReload, "Recovery modal must still appear upon reload after failed reset");
 
-  // Download recovery backup and verify all 5001 rows are intact
+  // Download recovery backup and verify BOTH attributes and 5001 rows are intact!
   const [fRecDownload] = await Promise.all([
     fPage.waitForEvent("download"),
     fPage.click("#recovery-download-btn")
@@ -600,28 +615,30 @@ try {
     fChunks.push(chunk);
   }
   const fRecParsed = JSON.parse(Buffer.concat(fChunks).toString("utf-8"));
+  assert.deepStrictEqual(fRecParsed.attributes, JSON.parse(origAttrsF), "Recovery backup must contain complete original attributes");
   assert(fRecParsed.products?.length === 5001, `Recovery backup must still contain 5001 rows, got ${fRecParsed.products?.length}`);
 
-  // Clear injected failure and retry reset: must succeed!
-  await fPage.evaluate(() => {
-    window.__setItemFailProducts = false;
-  });
+  // Retry reset without injected failure: must succeed!
   await fPage.click("#recovery-reset-btn");
   await fPage.waitForSelector("#recovery-modal", { state: "hidden" });
   const fSuccessToast = await fPage.locator(".toast-info .toast-message").last().textContent();
   assert(fSuccessToast.includes("Zresetowano") || fSuccessToast.includes("reset"), `Expected reset success toast, got ${fSuccessToast}`);
-  const fProdsAfterSuccess = await fPage.evaluate(() => localStorage.getItem("inventory_products"));
-  assert(fProdsAfterSuccess === "[]", "Products should now be reset to empty array []");
+  const fProjectAfterSuccess = await fPage.evaluate(() => localStorage.getItem("inventory_project"));
+  const fParsedSuccess = JSON.parse(fProjectAfterSuccess);
+  assert(Array.isArray(fParsedSuccess.products) && fParsedSuccess.products.length === 0, "Products should now be reset to empty array []");
+  assert.strictEqual(await fPage.evaluate(() => localStorage.getItem("inventory_attributes")), null, "Legacy attributes key must be cleaned up");
+  assert.strictEqual(await fPage.evaluate(() => localStorage.getItem("inventory_products")), null, "Legacy products key must be cleaned up");
 
   await fContext.close();
 
-  // 7G: IC05-1 Failed 2nd storage write during valid import preserves complete original
-  console.log("Subtest 7G: Failed 2nd write (inventory_products) during valid import preserves complete original...");
+  // 7G: IC05F-1 Persistent write rejection during valid import preserves complete original
+  console.log("Subtest 7G: Persistent write rejection during valid import preserves complete original...");
   const gContext = await browser.newContext();
   const gPage = await gContext.newPage({ viewport: { width: 1280, height: 800 } });
   await gPage.goto(baseUrl, { waitUntil: "networkidle" });
 
   await gPage.evaluate(([attrs, prods]) => {
+    localStorage.removeItem("inventory_project");
     localStorage.setItem("inventory_attributes", attrs);
     localStorage.setItem("inventory_products", prods);
   }, [origAttrsF, synthetic5001F]);
@@ -635,18 +652,16 @@ try {
   const gBannerVisible = await gPage.locator("#recovery-banner").isVisible();
   assert(gBannerVisible, "Recovery banner must be visible after temporary dismissal");
 
-  // Inject failure on localStorage.setItem for 'inventory_products'
+  // Inject persistent failure on localStorage.setItem
   await gPage.evaluate(() => {
-    const originalSetItem = localStorage.setItem.bind(localStorage);
-    window.__setItemFailProducts = true;
-    localStorage.setItem = function(key, val) {
-      if (window.__setItemFailProducts && key === 'inventory_products') {
-        const err = new Error('Quota exceeded');
-        err.name = 'QuotaExceededError';
-        err.code = 22;
-        throw err;
+    const realSetItem = Storage.prototype.setItem;
+    let failed = false;
+    Storage.prototype.setItem = function (key, value) {
+      if (this === localStorage && (failed || key === 'inventory_products' || key === 'inventory_project')) {
+        failed = true;
+        throw new DOMException('Injected persistent write failure', 'QuotaExceededError');
       }
-      return originalSetItem(key, val);
+      return realSetItem.call(this, key, value);
     };
   });
 
@@ -675,68 +690,93 @@ try {
   const gBannerAfterFail = await gPage.locator("#recovery-banner").isVisible();
   assert(gBannerAfterFail, "Recovery banner must remain visible when import fails to persist");
 
-  // Crucial: Storage must be completely rolled back (5001 rows and original attributes intact!)
+  // Crucial: Storage must be completely untouched (5001 rows and original attributes intact!)
   const gAttrsAfterFail = await gPage.evaluate(() => localStorage.getItem("inventory_attributes"));
   const gProdsAfterFail = await gPage.evaluate(() => localStorage.getItem("inventory_products"));
+  const gProjAfterFail = await gPage.evaluate(() => localStorage.getItem("inventory_project"));
   assert(gAttrsAfterFail === origAttrsF, "Attributes must remain original on partial import write failure");
   assert(gProdsAfterFail === synthetic5001F, "Products must remain original 5001 rows on partial import write failure");
+  assert(gProjAfterFail === null, "No project key should be created on failed import");
 
-  // Clear injected failure and retry import
-  await gPage.evaluate(() => {
-    window.__setItemFailProducts = false;
-  });
+  // Reload page and download recovery backup: verify BOTH attributes and 5001 rows
+  await gPage.reload({ waitUntil: "networkidle" });
+  await gPage.waitForSelector("#recovery-modal:not(.hide)");
+  const [gRecDownload] = await Promise.all([
+    gPage.waitForEvent("download"),
+    gPage.click("#recovery-download-btn")
+  ]);
+  const gChunks = [];
+  for await (const chunk of await gRecDownload.createReadStream()) {
+    gChunks.push(chunk);
+  }
+  const gRecParsed = JSON.parse(Buffer.concat(gChunks).toString("utf-8"));
+  assert.deepStrictEqual(gRecParsed.attributes, JSON.parse(origAttrsF), "Recovery backup must contain complete original attributes after reload");
+  assert(gRecParsed.products?.length === 5001, `Recovery backup must still contain 5001 rows after reload, got ${gRecParsed.products?.length}`);
+
+  // Dismiss modal again to retry import without failure hook
+  await gPage.click("#recovery-dismiss-btn");
+  await gPage.waitForSelector("#recovery-modal", { state: "hidden" });
+
+  // Retry import: must succeed!
   await gPage.setInputFiles("#import-json-file", {
     name: "valid-import.json",
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(validImportPayload), "utf-8")
   });
-  await gPage.waitForSelector(".toast-success");
-  const gProdsAfterSuccess = await gPage.evaluate(() => localStorage.getItem("inventory_products"));
-  assert(gProdsAfterSuccess.includes("Value1"), "Products should now contain imported item");
+  const importSuccessLocator = gPage.locator(".toast-success .toast-message", { hasText: /zaimportowany|imported/i });
+  await importSuccessLocator.waitFor({ state: "visible" });
+  const gProjectAfterSuccess = await gPage.evaluate(() => localStorage.getItem("inventory_project"));
+  assert(gProjectAfterSuccess && gProjectAfterSuccess.includes("Value1"), "Project should now contain imported item");
+  assert.strictEqual(await gPage.evaluate(() => localStorage.getItem("inventory_attributes")), null, "Legacy attributes must be removed");
+  assert.strictEqual(await gPage.evaluate(() => localStorage.getItem("inventory_products")), null, "Legacy products must be removed");
 
   await gContext.close();
 
-  // 7H: IC05-1 Failed 1st storage write during reset preserves complete original
-  console.log("Subtest 7H: Failed 1st write (inventory_attributes) during reset preserves complete original...");
+  // 7H: IC05F-1 Legacy migration failure on startup preserves complete original legacy data
+  console.log("Subtest 7H: Legacy migration failure on startup preserves complete original legacy data...");
   const hContext = await browser.newContext();
   const hPage = await hContext.newPage({ viewport: { width: 1280, height: 800 } });
-  await hPage.goto(baseUrl, { waitUntil: "networkidle" });
 
-  await hPage.evaluate(([attrs, prods]) => {
-    localStorage.setItem("inventory_attributes", attrs);
-    localStorage.setItem("inventory_products", prods);
-  }, [origAttrsF, synthetic5001F]);
-
-  await hPage.reload({ waitUntil: "networkidle" });
-  await hPage.waitForSelector("#recovery-modal:not(.hide)");
-
-  // Inject failure on localStorage.setItem for 'inventory_attributes'
-  await hPage.evaluate(() => {
-    const originalSetItem = localStorage.setItem.bind(localStorage);
-    localStorage.setItem = function(key, val) {
-      if (key === 'inventory_attributes') {
-        const err = new Error('Quota exceeded');
-        err.name = 'QuotaExceededError';
-        err.code = 22;
-        throw err;
+  // Install quota exception for inventory_project migration before initial page navigation
+  await hPage.addInitScript(() => {
+    const realSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key, val) {
+      if (this === localStorage && key === 'inventory_project') {
+        throw new DOMException('Injected migration quota exceeded', 'QuotaExceededError');
       }
-      return originalSetItem(key, val);
+      return realSetItem.call(this, key, val);
     };
   });
 
-  await hPage.click("#recovery-reset-btn");
-  const hToastLocator = hPage.locator(".toast-error .toast-message", { hasText: /pełna|quota|Storage error|Błąd zapisu/i });
-  await hToastLocator.waitFor({ state: "visible" });
-  const hToastText = await hToastLocator.textContent();
-  assert(hToastText.includes("pełna") || hToastText.includes("quota") || hToastText.includes("Storage error") || hToastText.includes("Błąd zapisu"), `Expected storage error toast, got: ${hToastText}`);
+  await hPage.goto(baseUrl, { waitUntil: "networkidle" });
 
-  const hModalVisible = await hPage.locator("#recovery-modal").isVisible();
-  assert(hModalVisible, "Recovery modal must remain visible after failed 1st write");
+  const legacyAttrsH = JSON.stringify([{ name: "LegacyCol", type: "String" }]);
+  const legacyProdsH = JSON.stringify([{ id: 1, attributes: { LegacyCol: "LegacyValue" } }]);
 
+  await hPage.evaluate(([attrs, prods]) => {
+    localStorage.removeItem("inventory_project");
+    localStorage.setItem("inventory_attributes", attrs);
+    localStorage.setItem("inventory_products", prods);
+  }, [legacyAttrsH, legacyProdsH]);
+
+  // Reload page to trigger loadLocalData with migration hook active
+  await hPage.reload({ waitUntil: "networkidle" });
+
+  // App should load successfully into memory without crashing
+  const tableContentH = await hPage.textContent("#inventory-tbody");
+  assert(tableContentH.includes("LegacyValue"), "App must load legacy data into in-memory table even if migration write fails");
+
+  // Storage: inventory_project failed to write, so legacy keys MUST remain intact!
   const hAttrs = await hPage.evaluate(() => localStorage.getItem("inventory_attributes"));
   const hProds = await hPage.evaluate(() => localStorage.getItem("inventory_products"));
-  assert(hAttrs === origAttrsF, "Attributes must remain intact on 1st write failure");
-  assert(hProds === synthetic5001F, "Products must remain intact on 1st write failure");
+  const hProj = await hPage.evaluate(() => localStorage.getItem("inventory_project"));
+  assert.strictEqual(hAttrs, legacyAttrsH, "Legacy attributes must remain intact when migration fails");
+  assert.strictEqual(hProds, legacyProdsH, "Legacy products must remain intact when migration fails");
+  assert.strictEqual(hProj, null, "Project envelope must not be partially committed");
+
+  // No error toast or corruption modal should be displayed for valid legacy data
+  const hModalVisible = await hPage.locator("#recovery-modal").isVisible();
+  assert(!hModalVisible, "Recovery modal should not be shown when legacy data is valid");
 
   await hContext.close();
 
@@ -747,6 +787,7 @@ try {
   await iPage.goto(baseUrl, { waitUntil: "networkidle" });
 
   await iPage.evaluate(() => {
+    localStorage.removeItem("inventory_project");
     localStorage.setItem("inventory_attributes", "invalid-json{{");
     localStorage.setItem("inventory_products", "[]");
   });
@@ -989,7 +1030,7 @@ try {
   assert(errToastText.includes("Export error:"), `Expected export error toast, got: "${errToastText}"`);
 
   // Verify application state and localStorage remain intact
-  const prodsAfterNetErr = await page.evaluate(() => localStorage.getItem("inventory_products"));
+  const prodsAfterNetErr = await page.evaluate(() => localStorage.getItem("inventory_project") || localStorage.getItem("inventory_products"));
   assert(prodsAfterNetErr !== null && prodsAfterNetErr.includes("ImportedItemValue"), "Stored products must remain intact after network error");
 
   await page.unroute("**/api/export/**");

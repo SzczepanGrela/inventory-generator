@@ -369,12 +369,38 @@ function closeCacheRecoveryModal() {
   closeModal(elements.recoveryModal);
 }
 
+const PROJECT_STORAGE_KEY = 'inventory_project';
+const LEGACY_ATTRIBUTES_KEY = 'inventory_attributes';
+const LEGACY_PRODUCTS_KEY = 'inventory_products';
+
 function downloadRecoveryBackup() {
   if (!appState.corruptedCache) return;
-  let attrs = appState.corruptedCache.rawAttributes;
-  let prods = appState.corruptedCache.rawProducts;
-  try { attrs = JSON.parse(attrs); } catch {}
-  try { prods = JSON.parse(prods); } catch {}
+  let attrs = null;
+  let prods = null;
+
+  if (appState.corruptedCache.rawProject) {
+    try {
+      const parsed = JSON.parse(appState.corruptedCache.rawProject);
+      attrs = parsed.attributes;
+      prods = parsed.products;
+    } catch {}
+  }
+
+  if (!attrs && appState.corruptedCache.rawAttributes) {
+    try {
+      attrs = JSON.parse(appState.corruptedCache.rawAttributes);
+    } catch {
+      attrs = appState.corruptedCache.rawAttributes;
+    }
+  }
+
+  if (!prods && appState.corruptedCache.rawProducts) {
+    try {
+      prods = JSON.parse(appState.corruptedCache.rawProducts);
+    } catch {
+      prods = appState.corruptedCache.rawProducts;
+    }
+  }
 
   const recoveryPayload = {
     _recoveryNotice: "Awaryjny zrzut surowych danych z localStorage przed resetem",
@@ -405,7 +431,7 @@ async function resetCorruptedCacheToDefault() {
     const defaultAttrs = await res.json();
     const sanitized = sanitizeProjectData({ attributes: defaultAttrs, products: [] });
 
-    // IC05-1: Durable commit - must succeed before clearing recovery state or in-memory project!
+    // IC05-1 & IC05F-1: Durable commit - must succeed before clearing recovery state or in-memory project!
     persistProject(sanitized.attributes, [], { force: true });
 
     // Commit application state only after durable storage success
@@ -419,7 +445,7 @@ async function resetCorruptedCacheToDefault() {
     showToast(getTranslation('toast_defaults_restored') || 'Zresetowano dane do domyślnego szablonu.', 'info');
   } catch (err) {
     console.error('Failed to reset default template:', err);
-    // IC04-1 & IC05-1: Preserve corruptedCache and do NOT dismiss recovery modal if fetch or storage failed!
+    // IC04-1, IC05-1, IC05F-1: Preserve corruptedCache and do NOT dismiss recovery modal if fetch or storage failed!
     if (err && (err.name === 'QuotaExceededError' || err.code === 22)) {
       handleStorageError(err);
     } else {
@@ -436,24 +462,31 @@ function dismissCacheRecovery() {
 
 async function loadLocalData() {
   try {
-    const savedAttributes = localStorage.getItem('inventory_attributes');
-    const savedProducts = localStorage.getItem('inventory_products');
+    const rawProject = localStorage.getItem(PROJECT_STORAGE_KEY);
+    const legacyAttrs = localStorage.getItem(LEGACY_ATTRIBUTES_KEY);
+    const legacyProds = localStorage.getItem(LEGACY_PRODUCTS_KEY);
+
     let loadedSuccessfully = false;
     let corruptedDetected = false;
     let corruptionMessage = '';
 
-    if (savedAttributes !== null || savedProducts !== null) {
+    // IC05F-1: Distinguish presence vs absence of authoritative versioned project
+    if (rawProject !== null) {
+      // Authoritative project exists. Must not silently choose stale legacy data on failure!
       try {
-        const rawParsedAttributes = savedAttributes ? JSON.parse(savedAttributes) : null;
-        const rawParsedProducts = savedProducts ? JSON.parse(savedProducts) : [];
-        if (!rawParsedAttributes) {
-          throw new Error('Brak zdefiniowanych atrybutów w projekcie.');
+        let envelope;
+        try {
+          envelope = JSON.parse(rawProject);
+        } catch {
+          throw new Error('Uszkodzony format JSON w pamięci podręcznej.');
+        }
+        if (!envelope || typeof envelope !== 'object' || !Array.isArray(envelope.attributes) || !Array.isArray(envelope.products)) {
+          throw new Error('Nieprawidłowa struktura projektu w pamięci podręcznej.');
         }
         const sanitized = sanitizeProjectData({
-          attributes: rawParsedAttributes,
-          products: rawParsedProducts
+          attributes: envelope.attributes,
+          products: envelope.products
         });
-
         appState.attributes = sanitized.attributes;
         appState.products = sanitized.products;
         if (appState.products.length > 0) {
@@ -463,15 +496,20 @@ async function loadLocalData() {
           appState.nextProductId = 1;
         }
         loadedSuccessfully = true;
+        // Clean up lingering legacy keys if any existed
+        try {
+          localStorage.removeItem(LEGACY_ATTRIBUTES_KEY);
+          localStorage.removeItem(LEGACY_PRODUCTS_KEY);
+        } catch {}
       } catch (cacheErr) {
         corruptedDetected = true;
         corruptionMessage = cacheErr.message || 'Błąd walidacji danych w pamięci podręcznej.';
-        console.warn('Lokalny cache jest uszkodzony lub niezgodny:', cacheErr);
+        console.warn('Projekt jest uszkodzony lub niezgodny:', cacheErr);
 
-        // IC04-1: Preserve raw cache in localStorage. Do NOT overwrite storage with empty template!
         appState.corruptedCache = {
-          rawAttributes: savedAttributes,
-          rawProducts: savedProducts,
+          rawProject: rawProject,
+          rawAttributes: null,
+          rawProducts: null,
           errorMessage: corruptionMessage
         };
 
@@ -479,15 +517,62 @@ async function loadLocalData() {
           getTranslation('toast_cache_corrupted') || 'Wykryto problem z danymi w pamięci podręcznej. Twoje surowe dane zostały zabezpieczone przed nadpisaniem.',
           'error'
         );
+        showCacheRecoveryModal(corruptionMessage);
+        showRecoveryBanner();
+      }
+    } else if (legacyAttrs !== null || legacyProds !== null) {
+      // Authoritative project is absent, but legacy keys exist. Attempt migration.
+      try {
+        const rawParsedAttributes = legacyAttrs ? JSON.parse(legacyAttrs) : null;
+        const rawParsedProducts = legacyProds ? JSON.parse(legacyProds) : [];
+        if (!rawParsedAttributes) {
+          throw new Error('Brak zdefiniowanych atrybutów w projekcie.');
+        }
+        const sanitized = sanitizeProjectData({
+          attributes: rawParsedAttributes,
+          products: rawParsedProducts
+        });
+        appState.attributes = sanitized.attributes;
+        appState.products = sanitized.products;
+        if (appState.products.length > 0) {
+          const maxId = Math.max(...appState.products.map(p => p.id || 0));
+          appState.nextProductId = maxId + 1;
+        } else {
+          appState.nextProductId = 1;
+        }
+        loadedSuccessfully = true;
 
+        // Migrate to versioned project envelope.
+        // If migration write fails, retain complete original legacy data.
+        try {
+          persistProject(sanitized.attributes, sanitized.products);
+        } catch (migErr) {
+          console.warn('Migracja legacy danych nie powiodła się (dane legacy zachowane):', migErr);
+        }
+      } catch (legacyErr) {
+        corruptedDetected = true;
+        corruptionMessage = legacyErr.message || 'Błąd walidacji danych w pamięci podręcznej.';
+        console.warn('Lokalny cache legacy jest uszkodzony:', legacyErr);
+
+        appState.corruptedCache = {
+          rawProject: null,
+          rawAttributes: legacyAttrs,
+          rawProducts: legacyProds,
+          errorMessage: corruptionMessage
+        };
+
+        showToast(
+          getTranslation('toast_cache_corrupted') || 'Wykryto problem z danymi w pamięci podręcznej. Twoje surowe dane zostały zabezpieczone przed nadpisaniem.',
+          'error'
+        );
         showCacheRecoveryModal(corruptionMessage);
         showRecoveryBanner();
       }
     }
 
     if (!loadedSuccessfully) {
-      // If there was no previous cache at all (genuine first-time load):
       if (!corruptedDetected) {
+        // Genuine first-time visit: fetch default template and persist
         try {
           const res = await fetch(`${appState.apiBase}/api/attributes/default/${appState.currentLanguage}`);
           if (res.ok) {
@@ -496,8 +581,7 @@ async function loadLocalData() {
             appState.attributes = sanitized.attributes;
             appState.products = [];
             appState.nextProductId = 1;
-            saveAttributesToLocalStorage();
-            saveProductsToLocalStorage();
+            persistProject(appState.attributes, appState.products);
           }
         } catch (fetchErr) {
           console.error('Failed to load default attributes on first run:', fetchErr);
@@ -517,7 +601,6 @@ async function loadLocalData() {
         }
         appState.products = [];
         appState.nextProductId = 1;
-        // Do NOT call saveAttributesToLocalStorage() or saveProductsToLocalStorage()!
       }
     }
 
@@ -542,38 +625,25 @@ function persistProject(attributes, products, { force = false } = {}) {
     return false;
   }
 
-  const prevAttributes = localStorage.getItem('inventory_attributes');
-  const prevProducts = localStorage.getItem('inventory_products');
+  const projectEnvelope = {
+    version: 1,
+    attributes: attributes,
+    products: products
+  };
+  const serialized = JSON.stringify(projectEnvelope);
 
-  const serializedAttributes = JSON.stringify(attributes);
-  const serializedProducts = JSON.stringify(products);
+  // IC05F-1: Single authoritative versioned project commit point.
+  // One atomic localStorage.setItem call.
+  // If this throws, nothing in storage is modified or deleted.
+  localStorage.setItem(PROJECT_STORAGE_KEY, serialized);
 
-  let attributesWritten = false;
+  // Once inventory_project commits successfully, remove legacy keys so no stale split data lingers.
   try {
-    localStorage.setItem('inventory_attributes', serializedAttributes);
-    attributesWritten = true;
-    localStorage.setItem('inventory_products', serializedProducts);
-    return true;
-  } catch (err) {
-    // IC05-1: Durable rollback - ensure storage is never left partially written!
-    try {
-      if (attributesWritten) {
-        if (prevAttributes !== null) {
-          localStorage.setItem('inventory_attributes', prevAttributes);
-        } else {
-          localStorage.removeItem('inventory_attributes');
-        }
-      }
-      if (prevProducts !== null) {
-        localStorage.setItem('inventory_products', prevProducts);
-      } else {
-        localStorage.removeItem('inventory_products');
-      }
-    } catch (rollbackErr) {
-      console.error('Storage rollback failed:', rollbackErr);
-    }
-    throw err;
-  }
+    localStorage.removeItem(LEGACY_ATTRIBUTES_KEY);
+    localStorage.removeItem(LEGACY_PRODUCTS_KEY);
+  } catch {}
+
+  return true;
 }
 
 function saveAttributesToLocalStorage(force = false) {
@@ -612,12 +682,14 @@ async function loadLanguage(lang) {
     await loadTranslations(lang);
     
     // IC04-1: Only save default attributes on genuine first-time visit when no cache exists and not in recovery
-    if (!appState.isEdited && !appState.corruptedCache && localStorage.getItem('inventory_attributes') === null) {
+    if (!appState.isEdited && !appState.corruptedCache &&
+        localStorage.getItem(PROJECT_STORAGE_KEY) === null &&
+        localStorage.getItem(LEGACY_ATTRIBUTES_KEY) === null) {
       try {
         const attrRes = await fetch(`${appState.apiBase}/api/attributes/default/${lang}`);
         if (attrRes.ok) {
           appState.attributes = await attrRes.json();
-          saveAttributesToLocalStorage();
+          persistProject(appState.attributes, appState.products);
         }
       } catch (err) {
         console.error('Failed to load localized defaults:', err);
