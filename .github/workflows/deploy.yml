@@ -77,11 +77,12 @@ jobs:
       - name: Reject a stale automatic deployment
         id: freshness
         env:
+          EVENT_NAME: ${{ github.event_name }}
           EXPECTED_REVISION: ${{ inputs.expected_revision }}
           GH_TOKEN: ${{ github.token }}
         run: |
           deploy=true
-          if [[ -n "$EXPECTED_REVISION" ]]; then
+          if [[ "$EVENT_NAME" != "workflow_dispatch" && -n "$EXPECTED_REVISION" ]]; then
             main_revision="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
             if [[ "$main_revision" != "$EXPECTED_REVISION" ]]; then
               echo "Skipping stale deployment for $EXPECTED_REVISION; main is $main_revision."

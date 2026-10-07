@@ -1,74 +1,74 @@
 # Status prac Inventory Generator (Work Status)
 
-## 1. Podział statusu (Separation of Boundaries)
+## 1. Rozgraniczenie Środowisk i Statusów (Separation of Boundaries)
 
-- **Aktywna wersja produkcyjna (Live VPS)**:
-  - Commit SHA: `9a2dee631f4aff76dc2024d3036287ad93216452` (PR #18, .NET 10 LTS)
-  - Środowisko: `https://inventory-generator.grela.dev`
-  - Weryfikacja: `GET /api/health` zwraca 200 OK / SHA `9a2dee6...`; nagłówki CSP, nosniff, DENY, HSTS; `POST /api/export/csv` z `{"attributes": [null]}` zwraca 400 Bad Request.
-  - Rewizje `520be2c` (PR #21) oraz `1410c48` (PR #22) zostały scalone do `main`, ale **nie zostały wdrożone na produkcję** (decyzja wstrzymana do czasu zakończenia przeglądu poprawek).
-- **Gałąź główna (main)**: `7e6756362c0802a9d781edaf46f0ae0ab6b50860` (scalony PR #24, chroniona rulesetem `#24407679`, wymóg PR i zielonego `Quality gate`).
-- **Status akceptacji koordynatora (Audyt 2026-10-03 / IC03-S–P)**:
-  - Zadania D02.3a/d: Zaakceptowane.
-  - Zadania D02.3b/c/e/f: Częściowe / Otwarte (korekty IC03-1–5 zaimplementowane w PR-ach #23, #24 i niniejszym PR #25).
-  - Stopień zaawansowania roadmapy: 80% (PR #13 w `grela-dev-roadmap`).
-  - Usunięto bezwarunkowe roszczenia o "100% zamknięciu", "braku podatności" oraz "całkowitym braku OOM".
+Dla zachowania pełnej przejrzystości operacyjnej wprowadza się ścisłe rozróżnienie pomiędzy stanem kodu, testów, środowiska produkcyjnego oraz formalnej akceptacji:
+
+- **Zaimplementowane w kodzie źródłowym**:
+  - Rewizja bazowa `main`: `16ed383d2affb96a7a538ec935a7b3b7dd337257` (scalone PR #23, #24, #25).
+  - PR #26: `fix/preserve-cache-throughout-recovery` (head: `fdeadde`) – pojedynczy autorytatywny zapis projektu (`inventory_project`, wersjonowana koperta `{ version: 1, attributes, products }`) jako wyłączny punkt zatwierdzenia z bezpieczną migracją kluczy legacy, brak usuwania ani nadpisywania trwałego oryginału przed zatwierdzeniem nowego projektu, brak fałszywych toastów sukcesu, zachowanie stanu awaryjnego i pełnego oryginału (zarówno atrybutów, jak i 5001 wierszy) w kopii recovery po przeładowaniu, dołączenie dokładnego surowego stringu autorytatywnego projektu do eksportu recovery niezależnie od poprawności JSON (IC07-1), dwujęzyczny modal i etykiety accessibility (PL/EN).
+  - PR #27: `fix/operator-runbook-selectors-and-rollback` – wspierana ścieżka manualnego rollbacku w GitHub Actions (rozróżnienie intencjonalnego `workflow_dispatch` od automatycznej bramki świeżości `workflow_call` i `push`), zamrożenie promocyjne (*promotional freeze*) zamiast nieuzasadnionego powoływania się na lock ze snapshotu API, poprawna kolejność obsługi wyjątku `UncertainDeployment` przed `ReleaseError` powiązana bezpośrednio z rzeczywistym przykładem Python w runbooku za pomocą AST i wykonania (IC07-2), tablica selektorów kontenerów w bashu (`--filter id=...`), realistyczne budżety czasowe (CoolifyClient: 15s timeout, do 3 prób GET z backoffem 1s i 2s; 60s–210s dla pętli monitorowania), 34 testy offline Pythona powiązane bezpośrednio z rzeczywistymi blokami źródłowymi.
+  - **Ważne**: Obie gałęzie bazują niezależnie na `main` (`16ed383d`); **PR #27 nie zawiera zmian z PR #26**. Testy i CI obu PR-ów są rozłączne; połączony kandydat będzie wymagał wspólnego zielonego CI po standardowej integracji w `main`.
+- **Przetestowane w CI**:
+  - Dla PR #26: 84 testy .NET Core, 17 testów Pythona, 12 zestawów testów E2E Playwright (w tym subtesty 7F-7J weryfikujące błędy zapisu, trwałość oryginału po przeładowaniu, brak mutacji magazynu i zrzut surowego projektu oraz dwujęzyczność).
+  - Dla PR #27: 84 testy .NET Core, 34 testy Pythona (w tym testy offline kontraktu, odporności na niepewne wdrożenia, bramki świeżości workflow deploy powiązane z rzeczywistym `deploy.yml`, weryfikacji etykiet rewizji obrazu, kolejności wyjątków powiązanej z `operator-procedures.md` i selektorów kontenerów) oraz testy przeglądarkowe w zakresie gałęzi bazowej.
+- **Wdrożone na produkcję (Live VPS)**:
+  - Commit SHA: `9a2dee631f4aff76dc2024d3036287ad93216452` (PR #18, .NET 10 LTS).
+  - Publiczny punkt kontrolny: `https://inventory-generator.grela.dev` (odczyt publiczny potwierdza wersję `9a2dee6...`).
+  - **Żadne późniejsze zmiany z gałęzi `main` (w tym PR #23, #24, #25, #26, #27) nie zostały wdrożone na serwer produkcyjny VPS**. Wdrożenie produkcyjne pozostaje celowo niewykonane i niezatwierdzone w GitHub Actions do czasu ukończenia procedury odbioru.
+- **Formalny status odbioru koordynatora (Audyt 2026-10-07 / IC07, PR #53 w grela-dev-infrastructure)**:
+  - Zadanie **D02.3a** (zakres źródeł/metadanych, spójność SDK/.NET runtime/Actions/obrazu bazowego oraz powiązane PR-y zależności; definicja kanoniczna w [roadmapie grela-dev-roadmap](https://github.com/SzczepanGrela/grela-dev-roadmap/pull/13)) pozostaje **otwarte / niezamknięte** (*unchecked*).
+  - Zadanie **D02.3d** rejestruje zakres implementacji dostawy (*delivery implementation*) i dowody normalnego wydania w Coolify, a nie pełną izolację wykonawczą (*runtime isolation*).
+  - Zadania **D02.3b, D02.3c, D02.3e, D02.3f** pozostają **otwarte / w toku**:
+    - D02.3c & D02.3f: Zaadresowane w otwartych do review PR #26 (IC07-1) i PR #27 (IC07-2).
+    - D02.3b: Wymaga kwalifikacji obciążenia DOCX/CSV/HTML pod limitami 1 CPU / 512 MiB w skoordynowanym oknie (3 sloty no-wait nie stanowią bezwarunkowego dowodu wyeliminowania OOM).
+    - D02.3e: Testy awaryjne/rollbacku na żywym VPS wymagają odrębnego okna operacyjnego z progami zatrzymania.
+  - Oficjalny status śledzony jest bezpośrednio w dokumentacji koordynatora: audyty `audits/2026-10-07-inventory-candidate-review.md` (w `grela-dev-infrastructure` PR #53) oraz roadmapa (w `grela-dev-roadmap` PR #13, 84%). Zielone CI samo w sobie nie zamyka D02.3.
 
 ---
 
-## 2. Stan prac w podziale na obszary
+## 2. Szczegółowy stan prac w obszarach zadaniowych
 
 ### Obszar A: Architektura eksportu i współbieżność (IC03-2) - [Scalono w PR #23]
-- **Strumieniowanie DOCX**: Zachowano optymalizację w `DocxGenerator` opartą na `OpenXmlWriter`. Zapis wiersz-po-wierszu redukuje retencję obiektów w pamięci względem pełnego drzewa DOM.
+- **Buforowane generowanie DOCX**: `DocxGenerator` oparty na `OpenXmlWriter` zapisuje elementy XML do buforowanego pakietu dokumentu w pamięci (`MemoryStream`), redukując retencję obiektów w pamięci względem pełnego drzewa DOM modelu OpenXML. Gotowy bufor jest następnie zwracany jako tablica bajtów w odpowiedzi HTTP (nie jest to bezpośrednie strumieniowanie wierszy do sieciowego strumienia odpowiedzi HTTP).
 - **Konserwatywny semafor współbieżności (3 sloty, no-wait)**:
-  - Przywrócono produkcyjny limit **3 równoczesnych slotów** w `ExportRateLimiter` (`maxConcurrency = 3`).
-  - Przywrócono natychmiastową odmowę wstępu (`TimeSpan.Zero`) w `Program.cs` – żądania przy zajętych 3 slotach otrzymują natychmiast `HTTP 429 Too Many Requests` (`Retry-After: 1`).
-  - Wyeliminowano nieograniczoną czasowo kolejkę oczekujących żądań w pamięci.
-- **Pomiary wydajnościowe (`BenchmarkTests`)**:
-  - Poprawiono etykiety: `LiveManagedHeapDelta` precyzyjnie opisuje różnicę sterty zarządzanej mierzoną przez `GC.GetTotalMemory`, a nie całkowitą sumę alokacji bajtowych.
-  - Próbka Working Set po zakończeniu funkcji została oznaczona jako `ProcessWorkingSetAfterCompletion` (nie jako szczytowy profiler ciągły).
-  - Dodano test z trzema odrębnymi zestawami danych o zróżnicowanych kształtach brzegowych (tabela szeroka 50x1k, tabela długa 10x5k, tabela gęsta 25x1k ze zwiększonym tekstem).
+  - Limit 3 równoległych operacji eksportu dla wszystkich formatów (DOCX, CSV, HTML) w `ExportRateLimiter`.
+  - Natychmiastowe odrzucenie nadmiarowych żądań z kodem `HTTP 429 Too Many Requests` (`Retry-After: 1`, brak nieograniczonej kolejki FIFO w pamięci).
+- **Rzetelne pomiary wydajnościowe (`BenchmarkTests`)**:
+  - `LiveManagedHeapDelta` precyzyjnie opisuje zmianę rozmiaru sterty zarządzanej raportowaną przez `GC.GetTotalMemory`, a nie całkowitą sumę alokacji.
+  - Pomiar Working Set oznaczony jako `ProcessWorkingSetAfterCompletion` (wskazuje stan po zakończeniu, nie szczytowy profiler ciągły).
+  - Trzy zróżnicowane syntetyczne kształty tabel (szeroka 50x1k, długa 10x5k, gęsta 25x1k).
 
-### Obszar B: Bezpieczeństwo danych i logowanie (IC03-1 & IC03-3) - [Scalono w PR #24]
-- **Ochrona lokalnego cache (`wwwroot/js/app.js`, `wwwroot/index.html`)**:
-  - Surowy cache w `localStorage` jest w pełni zachowywany w razie błędu walidacji lub przekroczenia limitu 5000 wierszy (brak destrukcyjnego nadpisywania pustym `[]`).
-  - Wprowadzono modal ratunkowy (`#recovery-modal`) z możliwością pobrania surowego zrzutu danych JSON oraz jawnym przyciskiem zresetowania projektu do domyślnego szablonu.
-  - Obsłużono tryb bezpiecznej pracy w pamięci podręcznej po odrzuceniu modalu bez utraty danych z `localStorage`.
-- **Ścisła walidacja i kompatybilność schematu (`sanitizeProjectData`)**:
-  - Wstecznie kompatybilne wartości domyślne dla brakujących pól legacy (`String`, `columnWidth: 800`, `canBeEmpty: true`, `isBold: false`, itp.).
-  - Ścisłe odrzucanie nieprawidłowych typów: nieznane typy rzucają błąd (brak cichej koercji do `String`); nie-boolean (np. string `"false"`) rzuca błąd; `null` lub brak słownika produktów rzuca błąd.
-- **Eliminacja nazw kolumn i treści komórek z logów (`Program.cs`, `PayloadValidator.cs`)**:
-  - Wprowadzono `ValidationOutcome` z ustrukturyzowanymi, ograniczonymi kodami błędów (`INVALID_ATTRIBUTE_TYPE`, `DUPLICATE_ATTRIBUTE_NAME`, `MAX_ROWS_EXCEEDED`, itp.).
-  - `Program.cs` loguje wyłącznie: `ClientIp`, `Format`, `ErrorCode`, `ColumnsCount`, `RowsCount` – ani jedna nazwa kolumny użytkownika ani klucz atrybutu nie trafia do logów serwera.
-- **Testy regresyjne**:
-  - `ExportValidationLoggingTests.cs` – 3 testy integracyjne weryfikujące, że wrażliwe/syntetyczne nazwy kolumn i kluczy nigdy nie pojawiają się w logach serwera.
-  - `test-browser.mjs` (Test 7) – weryfikacja odrzucania nieznanych typów, `"false"`, `null` w słownikach, zachowania 5001 wierszy w `localStorage` oraz bezpiecznego importu plików.
+### Obszar B: Integralność danych i bezpieczne logowanie (IC03-1, IC03-3, IC04-1, IC05-1, IC05F-1) - [Scalono w PR #24, poprawki w PR #26]
+- **Trwała ochrona lokalnego projektu**:
+  - Pojedynczy autorytatywny zapis projektu (`persistProject` zapisujący wersjonowaną kopertę `inventory_project`), eliminujący zawodne próby kompensacji dwufazowej; w razie niepowodzenia zapisu magazyn `localStorage` pozostaje nienaruszony (dane legacy zachowane).
+  - `resetCorruptedCacheToDefault` oraz `importProjectFromJson` czyszczą stan recovery i wyświetlają toast sukcesu dopiero po trwałym zatwierdzeniu projektu w magazynie przeglądarki.
+  - Zachowanie stanu recovery i pełnego oryginału (zarówno atrybutów, jak i 5001 wierszy) w magazynie i po przeładowaniu strony.
+  - Pełna dwujęzyczność okna recovery i etykiet ARIA (PL/EN).
+- **Logi serwerowe bez danych użytkownika (`Program.cs`, `PayloadValidator.cs`)**:
+  - Ustrukturyzowane kody błędów (`ValidationOutcome`) – logowane wyłącznie metadane (`ClientIp`, `Format`, `ErrorCode`, `ColumnsCount`, `RowsCount`). Żadna nazwa kolumny użytkownika ani klucz atrybutu nie trafia do logów.
 
-### Obszar C: Procedury operatorskie i testy E2E (IC03-4 & IC03-5) - [Wdrożone w PR 3]
-- **Korekta runbooka operatorskiego (`docs/operator-procedures.md`)**:
-  - Poprawiono parametr wywołania rollbacku: `digest` zamiast błędnego `target_digest`.
-  - Zaktualizowano polecenie `infra.smokecheck` z flagami `--base-url` oraz `--expected-revision`.
-  - Dodano jednoznaczną rezolucję kontenera w Coolify z obsługą potencjalnego nakładania się instancji (*rolling overlap*).
-  - Poprawiono domenę sąsiedniej aplikacji na `tictactoe.grela.dev` (zamiast `ttt.grela.dev`).
-  - Uściślono zakres semafora (3 sloty dla wszystkich formatów: DOCX, CSV i HTML, z natychmiastowym 429).
-  - Sprecyzowano kryteria bezpieczeństwa: skan podatności uwzględniający `ignore-unfixed: true`, rozróżnienie wskaźnika *load average* od procentowego zużycia CPU oraz weryfikację zdarzeń OOM przez `State.OOMKilled` i cgroup v2 `memory.events` (zamiast samego kodu wyjścia 137).
-  - Usunięto nieuzasadnione twierdzenie o "natychmiastowym" rollbacku na rzecz procedury ze zdefiniowanym czasem oczekiwania i weryfikacją.
-- **Test regresyjny chunked stream Kestrel (`RealKestrelStreamedRegressionTests.cs`)**:
-  - Dodano test uruchamiający rzeczywisty proces Kestrel na gnieździe TCP loopback weryfikujący natychmiastowe zwracanie statusu HTTP 413 Payload Too Large przy strumieniowaniu chunked body > 2 MiB.
-- **Rozszerzenie scenariuszy Playwright (`tests/browser/test-browser.mjs`)**:
-  - Dodano testy pobierania plików (CSV, DOCX, HTML, JSON) z weryfikacją nagłówków, rozszerzeń i zawartości.
-  - Dodano test responsywnego widoku mobilnego (375x667) z weryfikacją ukrywania elementów `.hide-mobile` i braku poziomego przepełnienia strony.
-  - Dodano test pułapki fokusu Tab (w przód i w tył) oraz przywracania fokusu do wywołującego przycisku po zamknięciu modalu klawiszem Escape.
-  - Dodano test blokady przycisku eksportu i automatycznego odblokowania po odliczeniu czasu przy kodzie HTTP 429.
-  - Dodano test odporności na błędy sieciowe (route abort) z zachowaniem danych w pamięci.
-- **Poprawka w `wwwroot/js/app.js`**:
-  - Dodano brakujące powiązanie elementu `documentPreviewContainer` w obiekcie `elements`, zapobiegające błędowi `TypeError` podczas otwierania podglądu dokumentu.
+### Obszar C: Procedury operatorskie i testy integracyjne (IC03-4, IC03-5, IC04-2, IC05-2..4, IC05F-2) - [Scalono w PR #25, poprawki w PR #27]
+- **Wykonywalny runbook operatorski (`docs/operator-procedures.md`)**:
+  - Selektor kontenera: numeryczny database ID (`APP_NUMERIC_ID`) z Coolify API lub unikalny prefiks nazwy kontenera dla danego UUID; dla wielu kontenerów tablica argumentów `FILTER_ARGS+=(--filter "id=$cid")`.
+  - Manualny rollback w GitHub Actions: wspierana ścieżka `workflow_dispatch` z weryfikacją etykiety obrazu i ochroną przed pominięciem przez bramkę świeżości.
+  - Awaryjny rollback w Coolify: wymóg skoordynowanego zamrożenia promocji (*promotional freeze*) na czas operacji; obsługa `UncertainDeployment` przed `ReleaseError`.
+  - Rzetelne budżety czasowe: `CoolifyClient` stosuje domyślnie 15-sekundowy timeout pojedynczego wywołania oraz do 3 prób GET (z retry backoff 1s, 2s; natychmiastowy powrót przy sukcesie); pętla monitorowania sąsiada w runbooku (od min. 60s do maks. ~210s).
+- **Rozszerzone testy offline**:
+  - Regresja Kestrel chunked body HTTP 413 dla zapytań > 2 MiB.
+  - 34 testy Pythona powiązane bezpośrednio z rzeczywistym kodem źródłowym (ekstrakcja bloków shellowych z `.github/workflows/deploy.yml` dla bramki świeżości `push`/`workflow_call`/`workflow_dispatch` oraz weryfikacji etykiet obrazu; ekstrakcja selektora kontenerów z `docs/operator-procedures.md` dla 0/1/2 ID; kontrakt, odrzucanie wdrożeń przy konfliktach, niepewne statusy, kolejność wyjątków).
 
 ---
 
-## 3. Plan wdrożenia poprawek (Kolejność PR-ów)
+## 3. Zestawienie Otwartej Ścieżki Wydania (Open PRs)
 
-1. **PR 1**: `fix/concurrency-and-capacity-measurements` – [SCALONO (#23)]
-2. **PR 2**: `fix/data-preservation-and-payload-free-logs` – [SCALONO (#24)]
-3. **PR 3 (niniejszy)**: `fix/acceptance-runbook-and-browser-regressions` – korekta runbooka operatorskiego, regresja Real Kestrel 413, rozbudowa testów przeglądarkowych Playwright o 12 pełnych scenariuszy.
+Zgodnie z wytycznymi koordynatora, oba PR-y pozostają otwarte do przeglądu i nie są scalane przed autoryzacją:
 
+1. **PR #26 (Ochrona Cache w Całym Cyklu Recovery)**:
+   - Branch: `fix/preserve-cache-throughout-recovery`
+   - Head: `b3d6fb3`
+   - Status: Otwarty, zielone CI.
+2. **PR #27 (Wykonywalne Procedury Operatorskie i Bezpieczny Rollback)**:
+   - Branch: `fix/operator-runbook-selectors-and-rollback`
+   - Head: [aktualizowany w bieżącym commicie]
+   - Status: Otwarty do przeglądu koordynatora.
