@@ -1034,6 +1034,43 @@ select:focus {
   }
 }
 
+/* Recovery Status Banner */
+.recovery-banner {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid #f59e0b;
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1.25rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.recovery-banner.hide {
+  display: none !important;
+}
+
+.recovery-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.btn-warning {
+  background-color: #f59e0b;
+  color: #ffffff;
+  border: none;
+}
+
+.btn-warning:hover {
+  background-color: #d97706;
+  color: #ffffff;
+}
+
 /* Notifications Toast */
 .toast-container {
   position: fixed;
