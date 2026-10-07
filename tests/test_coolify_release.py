@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import io
 import json
 import os
@@ -608,6 +609,17 @@ class TestOperatorProceduresAndDeployWorkflow(unittest.TestCase):
             raise RuntimeError("Could not find container selector snippet in docs/operator-procedures.md")
         cls.selector_script = match.group(1)
 
+        # Extract actual manual rollback python snippet from docs/operator-procedures.md (Section 2.2 Option B)
+        py_match = re.search(
+            r"#### Opcja B.*?"
+            r"```bash\s*\npython3 -c '(.*?)'\s*\n```",
+            runbook_text,
+            re.DOTALL,
+        )
+        if not py_match:
+            raise RuntimeError("Could not find manual python snippet under Option B in docs/operator-procedures.md")
+        cls.manual_rollback_script = py_match.group(1).strip()
+
     def _run_freshness_gate(
         self, event_name: str, expected_revision: str, main_revision: str
     ) -> bool:
@@ -783,19 +795,105 @@ exit 0
         self.assertTrue(passed)
 
     def test_runbook_exception_ordering(self):
-        # IC05-3: UncertainDeployment inherits from ReleaseError; handling must catch UncertainDeployment first
+        # IC05-3 & IC07-2: UncertainDeployment inherits from ReleaseError; handling in docs/operator-procedures.md
+        # must catch UncertainDeployment BEFORE ReleaseError, otherwise UncertainDeployment is shadowed.
         self.assertTrue(issubclass(release.UncertainDeployment, release.ReleaseError))
 
-        def dispatch_correct(exc: Exception) -> str:
-            try:
-                raise exc
-            except release.UncertainDeployment:
-                return "uncertain_handled"
-            except release.ReleaseError:
-                return "release_error_handled"
+        # 1. Parse AST from the actual runbook snippet extracted from docs/operator-procedures.md
+        tree = ast.parse(self.manual_rollback_script)
+        try_nodes = [node for node in ast.walk(tree) if isinstance(node, ast.Try)]
+        self.assertTrue(try_nodes, "Runbook manual rollback snippet must contain a try/except block")
 
-        self.assertEqual(dispatch_correct(release.UncertainDeployment("uncertain state")), "uncertain_handled")
-        self.assertEqual(dispatch_correct(release.ReleaseError("regular error")), "release_error_handled")
+        # Find the try block that guards verify_no_running_deployment
+        relevant_try = None
+        for t in try_nodes:
+            calls = [
+                n.func.id for n in ast.walk(t)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+            ]
+            if "verify_no_running_deployment" in calls:
+                relevant_try = t
+                break
+
+        self.assertIsNotNone(
+            relevant_try,
+            "Could not find try block protecting verify_no_running_deployment in runbook snippet",
+        )
+
+        handler_types = [
+            h.type.id for h in relevant_try.handlers
+            if isinstance(h.type, ast.Name)
+        ]
+        self.assertIn("UncertainDeployment", handler_types)
+        self.assertIn("ReleaseError", handler_types)
+
+        # Assert that UncertainDeployment precedes ReleaseError in handler order
+        uncertain_idx = handler_types.index("UncertainDeployment")
+        release_error_idx = handler_types.index("ReleaseError")
+        self.assertLess(
+            uncertain_idx,
+            release_error_idx,
+            "In docs/operator-procedures.md, UncertainDeployment handler must precede ReleaseError handler "
+            "because UncertainDeployment is a subclass of ReleaseError",
+        )
+
+        # 2. Runtime behavioral verification: compile and execute the handler order with fake dependencies
+        def create_dispatcher(handlers: list[ast.ExceptHandler]):
+            func_def = ast.FunctionDef(
+                name="dispatch_exc",
+                args=ast.arguments(
+                    posonlyargs=[],
+                    args=[ast.arg(arg="exc", annotation=None)],
+                    kwonlyargs=[],
+                    kw_defaults=[],
+                    defaults=[],
+                ),
+                body=[
+                    ast.Try(
+                        body=[ast.Raise(exc=ast.Name(id="exc", ctx=ast.Load()), cause=None)],
+                        handlers=[
+                            ast.ExceptHandler(
+                                type=h.type,
+                                name=h.name,
+                                body=[ast.Return(value=ast.Constant(value=h.type.id))],
+                            )
+                            for h in handlers
+                        ],
+                        orelse=[],
+                        finalbody=[],
+                    )
+                ],
+                decorator_list=[],
+            )
+            ast.fix_missing_locations(func_def)
+            mod = ast.Module(body=[func_def], type_ignores=[])
+            env = {"UncertainDeployment": release.UncertainDeployment, "ReleaseError": release.ReleaseError}
+            exec(compile(mod, filename="<runbook_ast>", mode="exec"), env)
+            return env["dispatch_exc"]
+
+        # Runbook handler order correctly routes UncertainDeployment to UncertainDeployment handler
+        runbook_dispatcher = create_dispatcher(relevant_try.handlers)
+        self.assertEqual(
+            runbook_dispatcher(release.UncertainDeployment("uncertain state")),
+            "UncertainDeployment",
+        )
+        self.assertEqual(
+            runbook_dispatcher(release.ReleaseError("regular error")),
+            "ReleaseError",
+        )
+
+        # 3. Regression proof: demonstrate that reversing the handler order fails the exception routing check
+        reversed_dispatcher = create_dispatcher(list(reversed(relevant_try.handlers)))
+        # When reversed, UncertainDeployment is mistakenly caught by ReleaseError because of subclassing!
+        self.assertNotEqual(
+            reversed_dispatcher(release.UncertainDeployment("uncertain state")),
+            "UncertainDeployment",
+            "Reversed handler order must NOT correctly handle UncertainDeployment",
+        )
+        self.assertEqual(
+            reversed_dispatcher(release.UncertainDeployment("uncertain state")),
+            "ReleaseError",
+        )
 
     def test_runbook_container_selector_zero_containers_fails(self):
         # IC05F-2: Zero containers output error and exit code 1
