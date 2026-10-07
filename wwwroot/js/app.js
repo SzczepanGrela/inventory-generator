@@ -378,27 +378,36 @@ function downloadRecoveryBackup() {
   let attrs = null;
   let prods = null;
 
-  if (appState.corruptedCache.rawProject) {
+  const hasAuthoritativeProject = appState.corruptedCache.rawProject !== null && appState.corruptedCache.rawProject !== undefined;
+
+  if (hasAuthoritativeProject) {
     try {
       const parsed = JSON.parse(appState.corruptedCache.rawProject);
-      attrs = parsed.attributes;
-      prods = parsed.products;
+      if (parsed && typeof parsed === 'object') {
+        if (Array.isArray(parsed.attributes)) {
+          attrs = parsed.attributes;
+        }
+        if (Array.isArray(parsed.products)) {
+          prods = parsed.products;
+        }
+      }
     } catch {}
-  }
-
-  if (!attrs && appState.corruptedCache.rawAttributes) {
-    try {
-      attrs = JSON.parse(appState.corruptedCache.rawAttributes);
-    } catch {
-      attrs = appState.corruptedCache.rawAttributes;
+  } else {
+    // Only use legacy keys if authoritative project is absent
+    if (appState.corruptedCache.rawAttributes !== null && appState.corruptedCache.rawAttributes !== undefined) {
+      try {
+        attrs = JSON.parse(appState.corruptedCache.rawAttributes);
+      } catch {
+        attrs = appState.corruptedCache.rawAttributes;
+      }
     }
-  }
 
-  if (!prods && appState.corruptedCache.rawProducts) {
-    try {
-      prods = JSON.parse(appState.corruptedCache.rawProducts);
-    } catch {
-      prods = appState.corruptedCache.rawProducts;
+    if (appState.corruptedCache.rawProducts !== null && appState.corruptedCache.rawProducts !== undefined) {
+      try {
+        prods = JSON.parse(appState.corruptedCache.rawProducts);
+      } catch {
+        prods = appState.corruptedCache.rawProducts;
+      }
     }
   }
 
@@ -409,6 +418,18 @@ function downloadRecoveryBackup() {
     attributes: attrs,
     products: prods
   };
+
+  if (hasAuthoritativeProject) {
+    recoveryPayload.rawProject = appState.corruptedCache.rawProject;
+    recoveryPayload.rawAuthoritativeProject = appState.corruptedCache.rawProject;
+  } else {
+    if (appState.corruptedCache.rawAttributes !== null && appState.corruptedCache.rawAttributes !== undefined) {
+      recoveryPayload.rawAttributes = appState.corruptedCache.rawAttributes;
+    }
+    if (appState.corruptedCache.rawProducts !== null && appState.corruptedCache.rawProducts !== undefined) {
+      recoveryPayload.rawProducts = appState.corruptedCache.rawProducts;
+    }
+  }
 
   const blob = new Blob([JSON.stringify(recoveryPayload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);

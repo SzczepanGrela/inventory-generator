@@ -821,6 +821,124 @@ try {
 
   await iContext.close();
 
+  // -------------------------------------------------------------------------
+  // Subtest 7J: IC07-1 Recovery download preserves raw authoritative project
+  // byte-for-byte on truncated, empty, and invalid-structure values without
+  // mutating storage or falling back to stale legacy data
+  // -------------------------------------------------------------------------
+  console.log("Subtest 7J (IC07-1): Preserving raw authoritative project in recovery download...");
+  const jContext = await browser.newContext();
+  const jPage = await jContext.newPage({ viewport: { width: 1280, height: 800 } });
+  await jPage.goto(baseUrl, { waitUntil: "networkidle" });
+
+  // Helper to trigger and read recovery download
+  async function downloadAndParseRecoveryBackup(pageInstance) {
+    const [download] = await Promise.all([
+      pageInstance.waitForEvent("download"),
+      pageInstance.click("#recovery-download-btn")
+    ]);
+    const stream = await download.createReadStream();
+    const chunks = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+    return JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+  }
+
+  // 7J.1: Truncated authoritative JSON value
+  const truncatedRaw = '{"version":1,"attributes":[{"name":"Saved","type":"String"}],"products":[{"id":1';
+  const staleLegacyAttrs = JSON.stringify([{ name: "StaleCol", type: "String" }]);
+  const staleLegacyProds = JSON.stringify([{ id: 999, attributes: { StaleCol: "StaleVal" } }]);
+
+  await jPage.evaluate(([rawProj, legAttrs, legProds]) => {
+    localStorage.setItem("inventory_project", rawProj);
+    localStorage.setItem("inventory_attributes", legAttrs);
+    localStorage.setItem("inventory_products", legProds);
+  }, [truncatedRaw, staleLegacyAttrs, staleLegacyProds]);
+
+  await jPage.reload({ waitUntil: "networkidle" });
+  await jPage.waitForSelector("#recovery-modal:not(.hide)");
+
+  const recParsedTrunc = await downloadAndParseRecoveryBackup(jPage);
+  assert.strictEqual(recParsedTrunc.rawProject, truncatedRaw, "Recovery backup must preserve exact truncated authoritative string byte-for-byte");
+  assert.strictEqual(recParsedTrunc.rawAuthoritativeProject, truncatedRaw, "rawAuthoritativeProject must match truncated string byte-for-byte");
+  assert.strictEqual(recParsedTrunc.attributes, null, "Extracted attributes must be null when JSON is truncated");
+  assert.strictEqual(recParsedTrunc.products, null, "Extracted products must be null when JSON is truncated");
+
+  const storageAfterTruncDownload = await jPage.evaluate(() => localStorage.getItem("inventory_project"));
+  assert.strictEqual(storageAfterTruncDownload, truncatedRaw, "Storage must not be mutated by downloading recovery backup");
+
+  const tableTextTrunc = await jPage.textContent("#inventory-tbody");
+  assert(!tableTextTrunc.includes("StaleVal"), "Stale legacy data must not be loaded into memory when authoritative project is present");
+
+  // 7J.2: Valid JSON with invalid structure
+  const invalidStructureRaw = '{"version":1,"attributes":"not-an-array","products":null}';
+  await jPage.evaluate(([rawProj, legAttrs, legProds]) => {
+    localStorage.setItem("inventory_project", rawProj);
+    localStorage.setItem("inventory_attributes", legAttrs);
+    localStorage.setItem("inventory_products", legProds);
+  }, [invalidStructureRaw, staleLegacyAttrs, staleLegacyProds]);
+
+  await jPage.reload({ waitUntil: "networkidle" });
+  await jPage.waitForSelector("#recovery-modal:not(.hide)");
+
+  const recParsedInvalid = await downloadAndParseRecoveryBackup(jPage);
+  assert.strictEqual(recParsedInvalid.rawProject, invalidStructureRaw, "Recovery backup must preserve invalid structure raw string byte-for-byte");
+  assert.strictEqual(recParsedInvalid.rawAuthoritativeProject, invalidStructureRaw, "rawAuthoritativeProject must match invalid structure raw string");
+  assert.strictEqual(recParsedInvalid.attributes, null, "Extracted attributes must be null when structure is invalid");
+  assert.strictEqual(recParsedInvalid.products, null, "Extracted products must be null when structure is invalid");
+
+  const storageAfterInvalidDownload = await jPage.evaluate(() => localStorage.getItem("inventory_project"));
+  assert.strictEqual(storageAfterInvalidDownload, invalidStructureRaw, "Storage must not be mutated by downloading recovery backup");
+
+  // 7J.3: Empty authoritative string
+  const emptyRaw = "";
+  await jPage.evaluate(([rawProj, legAttrs, legProds]) => {
+    localStorage.setItem("inventory_project", rawProj);
+    localStorage.setItem("inventory_attributes", legAttrs);
+    localStorage.setItem("inventory_products", legProds);
+  }, [emptyRaw, staleLegacyAttrs, staleLegacyProds]);
+
+  await jPage.reload({ waitUntil: "networkidle" });
+  await jPage.waitForSelector("#recovery-modal:not(.hide)");
+
+  const recParsedEmpty = await downloadAndParseRecoveryBackup(jPage);
+  assert.strictEqual(recParsedEmpty.rawProject, "", "Recovery backup must preserve empty authoritative string byte-for-byte");
+  assert.strictEqual(recParsedEmpty.rawAuthoritativeProject, "", "rawAuthoritativeProject must match empty string");
+  assert.strictEqual(recParsedEmpty.attributes, null, "Attributes must be null for empty authoritative string");
+  assert.strictEqual(recParsedEmpty.products, null, "Products must be null for empty authoritative string");
+
+  const storageAfterEmptyDownload = await jPage.evaluate(() => localStorage.getItem("inventory_project"));
+  assert.strictEqual(storageAfterEmptyDownload, "", "Storage must not be mutated by downloading recovery backup");
+
+  // 7J.4: Valid over-limit envelope preserves all attributes, rows, and raw envelope
+  const overLimitEnvelope = JSON.stringify({
+    version: 1,
+    attributes: [{ name: "ColOver", type: "String" }],
+    products: Array.from({ length: 5001 }, (_, i) => ({
+      id: i + 1,
+      attributes: { ColOver: `Val${i + 1}` }
+    }))
+  });
+  await jPage.evaluate(([rawProj]) => {
+    localStorage.setItem("inventory_project", rawProj);
+    localStorage.removeItem("inventory_attributes");
+    localStorage.removeItem("inventory_products");
+  }, [overLimitEnvelope]);
+
+  await jPage.reload({ waitUntil: "networkidle" });
+  await jPage.waitForSelector("#recovery-modal:not(.hide)");
+
+  const recParsedOver = await downloadAndParseRecoveryBackup(jPage);
+  assert.strictEqual(recParsedOver.rawProject, overLimitEnvelope, "Recovery backup must preserve complete raw over-limit envelope");
+  assert(Array.isArray(recParsedOver.attributes) && recParsedOver.attributes.length === 1, "Export must include attributes as convenience field");
+  assert(Array.isArray(recParsedOver.products) && recParsedOver.products.length === 5001, "Export must include all 5001 products as convenience field");
+
+  const storageAfterOverDownload = await jPage.evaluate(() => localStorage.getItem("inventory_project"));
+  assert.strictEqual(storageAfterOverDownload, overLimitEnvelope, "Storage must remain untouched after download");
+
+  await jContext.close();
+
   console.log("✓ Test 7 passed.");
 
   // -------------------------------------------------------------------------
