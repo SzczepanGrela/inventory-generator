@@ -2,6 +2,10 @@
 
 Dokument określa procedury weryfikacji wydania, wycofania (rollback), inspekcji środowiska uruchomieniowego (*effective-runtime readback*) oraz protokół pomiaru nakładania się kontenerów (*rolling overlap*) na współdzielonym serwerze VPS.
 
+Przygotowane, ręcznie uruchamiane ćwiczenia odrzucenia kandydata i rollbacku opisuje
+[protokół odbioru](operational-acceptance.md). Są oddzielone od zwykłych wdrożeń;
+obecność workflowu nie oznacza zaliczonego testu produkcyjnego.
+
 Zgodnie z decyzją architektoniczną `docs/decisions/2026-10-03-inventory-process-local-limits.md` (w prywatnym repozytorium infrastruktury `SzczepanGrela/grela-dev-infrastructure`) oraz wytycznymi koordynatora, **wszelkie testy obciążeniowe i awaryjne na współdzielonym VPS wymagają skoordynowanego okna operacyjnego, aktywnych progów zatrzymania (stop thresholds) oraz zapisanego stabilnego wydania bazowego**.
 
 ---

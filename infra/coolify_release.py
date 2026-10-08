@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -576,7 +576,12 @@ def rollback(
     return rollback_uuid
 
 
-def deploy_release(args: argparse.Namespace) -> None:
+def deploy_release(
+    args: argparse.Namespace,
+    *,
+    expected_previous: tuple[str, str] | None = None,
+    after_smoke: Callable[[], None] | None = None,
+) -> None:
     target_tag = digest_to_tag(args.digest)
     contract = load_contract(args.contract)
     image_repository = contract.get("docker_registry_image_name")
@@ -592,6 +597,9 @@ def deploy_release(args: argparse.Namespace) -> None:
     assert isinstance(previous_tag_value, str)
     previous_tag = previous_tag_value
     previous_revision = read_public_revision(args.public_url)
+    if expected_previous is not None:
+        if (previous_digest, previous_revision) != expected_previous:
+            raise ReleaseError("acceptance baseline changed; no deployment started")
     check_public_baseline(args.public_url, previous_revision)
     verify_image_revision(
         f"{image_repository}@{previous_digest}",
@@ -651,6 +659,8 @@ def deploy_release(args: argparse.Namespace) -> None:
             attempts=args.settle_attempts,
         )
         check_public_release(args.public_url, args.expected_revision)
+        if after_smoke is not None:
+            after_smoke()
         soak_release(
             args.public_url,
             args.expected_revision,
