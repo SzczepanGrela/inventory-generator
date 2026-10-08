@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from collections.abc import Mapping
 
 from infra import coolify_release as release
 
@@ -45,7 +46,10 @@ def verify_canary(client, args, *, command=HEALTH_COMMAND, require_healthy=True)
             raise release.ReleaseError("canary must not have deployment commands")
     # Do not assume that an app with no declared volume in our contract has none.
     storages = client._request("GET", f"/applications/{args.application_uuid}/storages")
-    if storages != []:
+    # Coolify 4.3.14 returns two lists, not a flat array (ApplicationsController).
+    if (not isinstance(storages, Mapping)
+            or storages.get("persistent_storages") != []
+            or storages.get("file_storages") != []):
         raise release.ReleaseError("canary storage is present or unreadable")
 
 

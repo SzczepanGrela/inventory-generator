@@ -47,6 +47,8 @@ full image `revision`, and confirmation `isolated-canary-health-gate`. Leave the
 previous-digest/revision fields empty. Both preflight and the private API guard
 reject production as the canary target. The live guard also rejects domain, port,
 storage, hooks and health/resource contract drift before changing anything.
+The storage guard follows the installed Coolify 4.3.14 API's separate
+`persistent_storages` and `file_storages` lists; both must be present and empty.
 
 The tool changes **only the canary's saved health command** to `/bin/false`, then
 queues a replacement with the same immutable image. The running old container

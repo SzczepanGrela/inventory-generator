@@ -108,7 +108,7 @@ class CanaryClient(FakeClient):
         super().__init__(sample_contract(), [["failed"], ["finished"]])
         self.application.update(name=canary.CANARY_NAME, fqdn=None)
         self.application["settings"]["is_preview_deployments_enabled"] = False
-        self.storages = []
+        self.storages = {"persistent_storages": [], "file_storages": []}
         self.patches = []
 
     def _request(self, method, path, body=None):
@@ -157,7 +157,10 @@ class TestCanaryAcceptance(unittest.TestCase):
         self.assertEqual(self.client.patches, [])
 
     def test_storage_or_unrecognized_storage_response_refused(self):
-        for storage in ([{"id": 1}], {"message": "unexpected"}):
+        for storage in ([], {"message": "unexpected"},
+                        {"persistent_storages": []},
+                        {"persistent_storages": [{"id": 1}], "file_storages": []},
+                        {"persistent_storages": [], "file_storages": [{"id": 1}]}):
             self.client.storages = storage
             with self.assertRaises(release.ReleaseError):
                 canary.run_acceptance(self.args)
