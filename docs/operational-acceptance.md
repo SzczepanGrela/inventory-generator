@@ -1,4 +1,4 @@
-# Operational acceptance record — October 9, 2026
+# Operational acceptance record — October 9–10, 2026
 
 The coordinator accepted the following distinct scopes. Private topology and
 raw operator logs remain in the infrastructure repository; this public record
@@ -32,8 +32,13 @@ modules and post-smoke failure hook are retired in this cleanup change. Ordinary
 is available in [PR #29](https://github.com/SzczepanGrela/inventory-generator/pull/29);
 it is not a standing instruction to run another fault or load drill.
 
-Removing code does not delete Coolify resources. Archiving logs, deleting only
-identified temporary apps and unused dedicated resources, then verifying absence
-remain coordinator/operator cleanup work. Monitoring/alert delivery, runtime
-parser exceptions, credential scope and shared edge/recovery gaps retain their
-own backlog entries.
+October 10 cleanup follow-up: the full passing log is archived privately and its
+regenerated summary agrees with the initial report. The operator confirmed
+deletion of both temporary application entries, the dedicated destination and
+empty test project. Selected Docker output shows no test containers or dedicated
+network; the proxy retains its production/ingress networks. Public Inventory
+health still reports the accepted `6971496` revision, and the neighbouring app
+is healthy. This source cleanup is not a new production deployment.
+
+Monitoring/alert delivery, runtime parser exceptions, credential scope and
+shared edge/recovery gaps retain their own backlog entries.

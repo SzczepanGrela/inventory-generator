@@ -1,6 +1,6 @@
 # Status prac Inventory Generator
 
-Stan koordynatora: **9 października 2026**. Kod, wdrożenie i wykonane testy są
+Stan koordynatora: **10 października 2026**. Kod, wdrożenie i wykonane testy są
 rozróżnione; nie jest to deklaracja ukończenia całego standardu platformy.
 
 ## Kod i produkcja
@@ -41,13 +41,17 @@ PR-u sprzątającego nie jest nowym wdrożeniem produkcyjnym.
 
 ## Pozostała praca
 
-D02.3a/b/c/d są przyjęte w prywatnej dokumentacji koordynatora. D02.3e/f pozostają
-otwarte na sprzątanie i końcową synchronizację dowodów. Ten PR usuwa tymczasowy
-workflow ćwiczeń, moduły i hak wymuszający błąd; zwykły release/rollback oraz jego
-testy pozostają. Scalanie PR-u i usunięcie zasobów Coolify to osobne czynności.
+D02.3a/b/c/d oraz wszystkie uzgodnione próby D02.3e są przyjęte. 10 października
+operator potwierdził usunięcie obu aplikacji testowych, dedykowanej destynacji i
+pustego projektu. Odczyt Dockera potwierdza brak kontenerów i sieci testowej,
+zachowanie sieci produkcyjnych proxy i zdrowe aplikacje. Pełny log zaliczonej próby
+jest zarchiwizowany i zweryfikowany w prywatnej dokumentacji.
 
-Trzeba zachować logi prób, usunąć wyłącznie zidentyfikowane zasoby testowe i
-potwierdzić ich brak. Nie potrzeba kolejnego testu obciążenia dla przyjętego zakresu.
+Niniejszy PR domyka sprzątanie źródeł i zapis odbioru: usuwa tymczasowy workflow
+ćwiczeń, moduły i hak wymuszający błąd; zwykły release/rollback i jego testy
+pozostają. Formalny stan scalenia i D02.3e/f prowadzi koordynator w dokumentacji
+prywatnej. Produkcja nadal działa na `6971496`; sprzątanie nie wymaga kolejnego
+testu obciążenia ani wdrożenia wyłącznie dla publikacji dokumentacji.
 Nadal osobno śledzone są centralny monitoring/alerty, wyjątki parsera hardeningu,
 zakres poświadczeń, izolacja edge w tej samej lokalizacji i szersze odzyskiwanie.
 Jedno wcześniejsze ostrzeżenie runnera przy rollbacku pozostaje niewyjaśnione;
